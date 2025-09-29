@@ -1,0 +1,54 @@
+# Multi-stage Dockerfile for MCP Server (TypeScript)
+# Optimized for production with security and performance
+
+# Build stage
+FROM node:20-alpine as builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN npm run build
+
+# Production stage
+FROM node:20-alpine as production
+
+# Install runtime dependencies
+RUN apk --no-cache add curl
+
+# Create non-root user
+RUN addgroup -g 1001 -S dataflux && \
+    adduser -u 1001 -S dataflux -G dataflux
+
+# Set working directory
+WORKDIR /app
+
+# Copy built application from builder stage
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+
+# Set ownership
+RUN chown -R dataflux:dataflux /app
+
+# Switch to non-root user
+USER dataflux
+
+# Expose ports
+EXPOSE 2015 2016
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:2015/health || exit 1
+
+# Run application
+CMD ["node", "dist/index.js"]

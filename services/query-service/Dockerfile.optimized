@@ -1,0 +1,60 @@
+# Multi-stage Dockerfile for Query Service (Go)
+# Optimized for production with security and performance
+
+# Build stage
+FROM golang:1.21-alpine as builder
+
+# Set environment variables
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN go build -ldflags="-w -s" -o main cmd/main.go
+
+# Production stage
+FROM alpine:latest as production
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates tzdata curl
+
+# Create non-root user
+RUN addgroup -g 1001 -S dataflux && \
+    adduser -u 1001 -S dataflux -G dataflux
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/main .
+
+# Set ownership
+RUN chown -R dataflux:dataflux /app
+
+# Switch to non-root user
+USER dataflux
+
+# Expose port
+EXPOSE 8003
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8003/health || exit 1
+
+# Run application
+CMD ["./main"]

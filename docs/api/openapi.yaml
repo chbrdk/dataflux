@@ -1,0 +1,836 @@
+openapi: 3.0.3
+info:
+  title: DataFlux API
+  description: |
+    DataFlux ist eine Universal AI-native Database für Medieninhalte mit einer Plugin-Architektur und Multi-Modal Search Capabilities.
+    
+    ## Features
+    - **Multi-Modal Search**: Suche über Video, Audio, Bilder und Dokumente
+    - **AI-Powered Analysis**: Automatische Inhaltsanalyse mit Machine Learning
+    - **Real-time Processing**: Streaming und Batch-Verarbeitung
+    - **Scalable Architecture**: Microservices-basierte Architektur
+    - **Enterprise Security**: JWT Authentication und RBAC
+    
+    ## Authentication
+    Alle API-Endpunkte (außer `/health` und `/docs`) erfordern Authentifizierung über JWT-Token.
+    
+    ```bash
+    # Login
+    curl -X POST http://localhost:8006/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"username":"admin","password":"admin123"}'
+    
+    # Use token in requests
+    curl -H "Authorization: Bearer <token>" \
+      http://localhost:8003/api/v1/search
+    ```
+  version: 1.0.0
+  contact:
+    name: DataFlux Support
+    email: support@dataflux.com
+    url: https://dataflux.com/support
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Development server
+  - url: https://api.dataflux.com
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: User authentication and authorization
+  - name: Assets
+    description: Asset management and upload
+  - name: Search
+    description: Multi-modal search capabilities
+  - name: Analysis
+    description: AI-powered content analysis
+  - name: Collections
+    description: Asset collection management
+  - name: Users
+    description: User management
+  - name: Monitoring
+    description: System monitoring and health checks
+
+paths:
+  # Authentication endpoints
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: Authenticate user and receive JWT tokens
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  example: admin123
+              required: [username, password]
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  token_type:
+                    type: string
+                    example: bearer
+                  refresh_token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: User registration
+      description: Register a new user account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get current user
+      description: Get current user information
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Asset endpoints
+  /api/v1/assets:
+    post:
+      tags: [Assets]
+      summary: Upload asset
+      description: Upload a new media asset for processing
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Media file to upload
+                collection_id:
+                  type: string
+                  format: uuid
+                  description: Collection ID to add asset to
+                priority:
+                  type: string
+                  enum: [low, normal, high]
+                  default: normal
+                  description: Processing priority
+                metadata:
+                  type: string
+                  description: Additional metadata as JSON string
+              required: [file]
+      responses:
+        '200':
+          description: Asset uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetResponse'
+        '400':
+          description: Invalid file or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      tags: [Assets]
+      summary: List assets
+      description: Get paginated list of assets
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: collection_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: mime_type
+          in: query
+          schema:
+            type: string
+            example: video/mp4
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed]
+      responses:
+        '200':
+          description: List of assets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AssetResponse'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /api/v1/assets/{asset_id}:
+    get:
+      tags: [Assets]
+      summary: Get asset details
+      description: Get detailed information about a specific asset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: asset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Asset details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetResponse'
+        '404':
+          description: Asset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Search endpoints
+  /api/v1/search:
+    post:
+      tags: [Search]
+      summary: Multi-modal search
+      description: Search across all media types using text, images, or audio
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          description: Invalid search request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/similar:
+    post:
+      tags: [Search]
+      summary: Find similar content
+      description: Find assets similar to a given asset
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                asset_id:
+                  type: string
+                  format: uuid
+                  description: Reference asset ID
+                limit:
+                  type: integer
+                  default: 10
+                  minimum: 1
+                  maximum: 50
+                threshold:
+                  type: number
+                  default: 0.7
+                  minimum: 0.0
+                  maximum: 1.0
+                  description: Similarity threshold
+              required: [asset_id]
+      responses:
+        '200':
+          description: Similar assets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  similar_assets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SimilarAsset'
+
+  # Analysis endpoints
+  /api/v1/analysis/{asset_id}:
+    get:
+      tags: [Analysis]
+      summary: Get analysis results
+      description: Get AI analysis results for an asset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: asset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Analysis results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisResponse'
+        '404':
+          description: Asset or analysis not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # Collection endpoints
+  /api/v1/collections:
+    get:
+      tags: [Collections]
+      summary: List collections
+      description: Get user's collections
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of collections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Collection'
+
+    post:
+      tags: [Collections]
+      summary: Create collection
+      description: Create a new collection
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionCreate'
+      responses:
+        '201':
+          description: Collection created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Collection'
+
+  # Monitoring endpoints
+  /health:
+    get:
+      tags: [Monitoring]
+      summary: Health check
+      description: Check system health status
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/v1/stats:
+    get:
+      tags: [Monitoring]
+      summary: System statistics
+      description: Get system usage statistics
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: System statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    UserCreate:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          example: john_doe
+        email:
+          type: string
+          format: email
+          example: john@example.com
+        password:
+          type: string
+          minLength: 8
+          example: securepassword123
+        full_name:
+          type: string
+          example: John Doe
+        role:
+          type: string
+          enum: [user, analyst, admin]
+          default: user
+      required: [username, email, password]
+
+    UserResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        role:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AssetResponse:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        file_size:
+          type: integer
+          format: int64
+        mime_type:
+          type: string
+        file_hash:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        collection_id:
+          type: string
+          format: uuid
+        metadata:
+          type: object
+        thumbnail_path:
+          type: string
+        proxy_path:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SearchRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Text search query
+          example: "cat playing with ball"
+        query_type:
+          type: string
+          enum: [text, image, audio, video]
+          default: text
+        filters:
+          type: object
+          properties:
+            mime_type:
+              type: string
+            collection_id:
+              type: string
+              format: uuid
+            date_from:
+              type: string
+              format: date-time
+            date_to:
+              type: string
+              format: date-time
+            min_confidence:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+        limit:
+          type: integer
+          default: 20
+          minimum: 1
+          maximum: 100
+        offset:
+          type: integer
+          default: 0
+          minimum: 0
+      required: [query]
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        total:
+          type: integer
+        query_time:
+          type: number
+          description: Query execution time in milliseconds
+
+    SearchResult:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        mime_type:
+          type: string
+        similarity_score:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        thumbnail_path:
+          type: string
+        metadata:
+          type: object
+        segments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Segment'
+
+    SimilarAsset:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        similarity_score:
+          type: number
+        thumbnail_path:
+          type: string
+
+    Segment:
+      type: object
+      properties:
+        segment_id:
+          type: string
+          format: uuid
+        segment_type:
+          type: string
+        start_time:
+          type: number
+        end_time:
+          type: number
+        confidence_score:
+          type: number
+        segment_data:
+          type: object
+
+    AnalysisResponse:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        analysis_status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        segments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Segment'
+        features:
+          type: array
+          items:
+            $ref: '#/components/schemas/Feature'
+        embeddings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Embedding'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Feature:
+      type: object
+      properties:
+        feature_id:
+          type: string
+          format: uuid
+        feature_type:
+          type: string
+        feature_data:
+          type: object
+        confidence_score:
+          type: number
+
+    Embedding:
+      type: object
+      properties:
+        embedding_id:
+          type: string
+          format: uuid
+        model_name:
+          type: string
+        dimension:
+          type: integer
+        embedding_vector:
+          type: array
+          items:
+            type: number
+
+    Collection:
+      type: object
+      properties:
+        collection_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        asset_count:
+          type: integer
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CollectionCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+      required: [name]
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        pages:
+          type: integer
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        services:
+          type: object
+          properties:
+            postgresql:
+              type: string
+              enum: [healthy, unhealthy]
+            redis:
+              type: string
+              enum: [healthy, unhealthy]
+            kafka:
+              type: string
+              enum: [healthy, unhealthy]
+            minio:
+              type: string
+              enum: [healthy, unhealthy]
+            weaviate:
+              type: string
+              enum: [healthy, unhealthy]
+            neo4j:
+              type: string
+              enum: [healthy, unhealthy]
+
+    StatsResponse:
+      type: object
+      properties:
+        total_assets:
+          type: integer
+        total_collections:
+          type: integer
+        total_users:
+          type: integer
+        storage_used:
+          type: integer
+          format: int64
+        processing_queue:
+          type: integer
+        system_uptime:
+          type: integer
+          format: int64
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+        timestamp:
+          type: string
+          format: date-time
+
+  examples:
+    AssetUpload:
+      summary: Video file upload
+      value:
+        file: "sample_video.mp4"
+        collection_id: "123e4567-e89b-12d3-a456-426614174000"
+        priority: "normal"
+        metadata: '{"tags": ["demo", "video"], "description": "Sample video"}'
+
+    SearchQuery:
+      summary: Text search
+      value:
+        query: "cat playing with ball"
+        query_type: "text"
+        filters:
+          mime_type: "video/%"
+          min_confidence: 0.7
+        limit: 10
+
+    SimilarContent:
+      summary: Find similar content
+      value:
+        asset_id: "123e4567-e89b-12d3-a456-426614174000"
+        limit: 5
+        threshold: 0.8

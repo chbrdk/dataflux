@@ -1,0 +1,286 @@
+# DataFlux Helm Chart Values
+# Default values for DataFlux deployment
+
+# Global configuration
+global:
+  imageRegistry: ghcr.io
+  imagePullSecrets: []
+  storageClass: ""
+
+# Image configuration
+image:
+  registry: ghcr.io
+  repository: dataflux
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: dataflux.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: web-ui
+            port: 3000
+        - path: /api
+          pathType: Prefix
+          service:
+            name: api-gateway
+            port: 80
+  tls:
+    - secretName: dataflux-tls
+      hosts:
+        - dataflux.local
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    web: 3000
+    api: 80
+    apiSecure: 443
+
+# Resource configuration
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# Autoscaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Network policy
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: dataflux
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+
+# Environment variables
+env:
+  - name: NODE_ENV
+    value: "production"
+  - name: LOG_LEVEL
+    value: "info"
+
+# ConfigMap
+configMap:
+  enabled: true
+  data:
+    POSTGRES_HOST: "postgres-service"
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: "dataflux"
+    REDIS_HOST: "redis-service"
+    REDIS_PORT: "6379"
+    KAFKA_HOST: "kafka-service"
+    KAFKA_PORT: "9092"
+    MINIO_HOST: "minio-service"
+    MINIO_PORT: "9000"
+    WEAVIATE_HOST: "weaviate-service"
+    WEAVIATE_PORT: "8080"
+    NEO4J_HOST: "neo4j-service"
+    NEO4J_PORT: "7474"
+    CLICKHOUSE_HOST: "clickhouse-service"
+    CLICKHOUSE_PORT: "8123"
+
+# Secret configuration
+secret:
+  enabled: true
+  data:
+    POSTGRES_PASSWORD: "dataflux_pass"
+    REDIS_PASSWORD: "dataflux_pass"
+    KAFKA_PASSWORD: "dataflux_pass"
+    MINIO_ACCESS_KEY: "dataflux_user"
+    MINIO_SECRET_KEY: "dataflux_pass"
+    NEO4J_PASSWORD: "dataflux_pass"
+    OPENAI_API_KEY: ""
+    ELEVENLABS_API_KEY: ""
+
+# Persistence configuration
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+# Backup configuration
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: 7  # Keep 7 backups
+  storage:
+    enabled: true
+    size: 50Gi
+
+# Dependencies configuration
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "dataflux_pass"
+    username: "dataflux_user"
+    password: "dataflux_pass"
+    database: "dataflux"
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "250m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "dataflux_pass"
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+kafka:
+  enabled: true
+  auth:
+    enabled: true
+    password: "dataflux_pass"
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+minio:
+  enabled: true
+  auth:
+    rootUser: "dataflux_user"
+    rootPassword: "dataflux_pass"
+  defaultBuckets: "dataflux-assets,dataflux-temp"
+  persistence:
+    enabled: true
+    size: 100Gi
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+prometheus:
+  enabled: true
+  server:
+    persistentVolume:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+
+grafana:
+  enabled: true
+  adminPassword: "admin"
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"

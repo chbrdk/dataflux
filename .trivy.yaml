@@ -1,0 +1,106 @@
+# Trivy Security Scanning Configuration
+# Comprehensive security scanning for DataFlux
+
+version: 1.0
+name: DataFlux Security Scan
+
+# Global configuration
+global:
+  # Severity levels to scan
+  severity: HIGH,CRITICAL
+  
+  # Exit code on vulnerability found
+  exit-code: 1
+  
+  # Output format
+  format: table,json
+  
+  # Output file
+  output: trivy-results.json
+
+# Image scanning configuration
+image:
+  # Scan all DataFlux images
+  targets:
+    - ghcr.io/dataflux/ingestion-service:latest
+    - ghcr.io/dataflux/query-service:latest
+    - ghcr.io/dataflux/analysis-service:latest
+    - ghcr.io/dataflux/mcp-server:latest
+    - ghcr.io/dataflux/web-ui:latest
+    - ghcr.io/dataflux/api-gateway:latest
+  
+  # Security checks
+  security-checks:
+    - vuln
+    - config
+    - secret
+    - license
+  
+  # Ignore specific vulnerabilities (if needed)
+  ignorefile: .trivyignore
+
+# Filesystem scanning configuration
+filesystem:
+  # Scan source code directories
+  targets:
+    - services/ingestion-service/src/
+    - services/analysis-service/src/
+    - services/query-service/
+    - services/mcp-server/src/
+    - services/web-ui/
+    - services/api-gateway/
+  
+  # Security checks
+  security-checks:
+    - vuln
+    - secret
+    - license
+
+# Repository scanning configuration
+repository:
+  # Scan the entire repository
+  targets:
+    - .
+  
+  # Security checks
+  security-checks:
+    - vuln
+    - secret
+    - license
+
+# Kubernetes manifest scanning
+kubernetes:
+  # Scan K8s manifests
+  targets:
+    - k8s/
+  
+  # Security checks
+  security-checks:
+    - vuln
+    - config
+    - secret
+
+# Helm chart scanning
+helm:
+  # Scan Helm charts
+  targets:
+    - helm/
+  
+  # Security checks
+  security-checks:
+    - vuln
+    - config
+    - secret
+
+# Database scanning
+db:
+  # Scan database configurations
+  targets:
+    - scripts/init-db.sql
+    - docker/docker-compose.yml
+  
+  # Security checks
+  security-checks:
+    - vuln
+    - config
+    - secret

@@ -1,0 +1,437 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dataflux
+  labels:
+    name: dataflux
+    environment: production
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dataflux-config
+  namespace: dataflux
+data:
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "dataflux"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  KAFKA_HOST: "kafka-service"
+  KAFKA_PORT: "9092"
+  MINIO_HOST: "minio-service"
+  MINIO_PORT: "9000"
+  WEAVIATE_HOST: "weaviate-service"
+  WEAVIATE_PORT: "8080"
+  NEO4J_HOST: "neo4j-service"
+  NEO4J_PORT: "7474"
+  CLICKHOUSE_HOST: "clickhouse-service"
+  CLICKHOUSE_PORT: "8123"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dataflux-secrets
+  namespace: dataflux
+type: Opaque
+data:
+  POSTGRES_PASSWORD: ZGF0YWZsdXhfcGFzcw==  # dataflux_pass
+  REDIS_PASSWORD: ZGF0YWZsdXhfcGFzcw==     # dataflux_pass
+  KAFKA_PASSWORD: ZGF0YWZsdXhfcGFzcw==     # dataflux_pass
+  MINIO_ACCESS_KEY: ZGF0YWZsdXhfdXNlcg==  # dataflux_user
+  MINIO_SECRET_KEY: ZGF0YWZsdXhfcGFzcw==   # dataflux_pass
+  NEO4J_PASSWORD: ZGF0YWZsdXhfcGFzcw==     # dataflux_pass
+  OPENAI_API_KEY: ""  # Add your OpenAI API key
+  ELEVENLABS_API_KEY: ""  # Add your ElevenLabs API key
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-service
+  namespace: dataflux
+  labels:
+    app: ingestion-service
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ingestion-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-service
+        version: v1
+    spec:
+      containers:
+      - name: ingestion-service
+        image: ghcr.io/dataflux/ingestion-service:latest
+        ports:
+        - containerPort: 8002
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-service
+  namespace: dataflux
+spec:
+  selector:
+    app: ingestion-service
+  ports:
+  - port: 8002
+    targetPort: 8002
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-service
+  namespace: dataflux
+  labels:
+    app: query-service
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: query-service
+  template:
+    metadata:
+      labels:
+        app: query-service
+        version: v1
+    spec:
+      containers:
+      - name: query-service
+        image: ghcr.io/dataflux/query-service:latest
+        ports:
+        - containerPort: 8003
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: query-service
+  namespace: dataflux
+spec:
+  selector:
+    app: query-service
+  ports:
+  - port: 8003
+    targetPort: 8003
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analysis-service
+  namespace: dataflux
+  labels:
+    app: analysis-service
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: analysis-service
+  template:
+    metadata:
+      labels:
+        app: analysis-service
+        version: v1
+    spec:
+      containers:
+      - name: analysis-service
+        image: ghcr.io/dataflux/analysis-service:latest
+        ports:
+        - containerPort: 8004
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analysis-service
+  namespace: dataflux
+spec:
+  selector:
+    app: analysis-service
+  ports:
+  - port: 8004
+    targetPort: 8004
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: dataflux
+  labels:
+    app: mcp-server
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+        version: v1
+    spec:
+      containers:
+      - name: mcp-server
+        image: ghcr.io/dataflux/mcp-server:latest
+        ports:
+        - containerPort: 2015
+        - containerPort: 2016
+        env:
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: OPENAI_API_KEY
+        - name: ELEVENLABS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: ELEVENLABS_API_KEY
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 2015
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 2015
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  namespace: dataflux
+spec:
+  selector:
+    app: mcp-server
+  ports:
+  - port: 2015
+    targetPort: 2015
+  - port: 2016
+    targetPort: 2016
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-ui
+  namespace: dataflux
+  labels:
+    app: web-ui
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-ui
+  template:
+    metadata:
+      labels:
+        app: web-ui
+        version: v1
+    spec:
+      containers:
+      - name: web-ui
+        image: ghcr.io/dataflux/web-ui:latest
+        ports:
+        - containerPort: 3000
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-ui
+  namespace: dataflux
+spec:
+  selector:
+    app: web-ui
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: dataflux
+  labels:
+    app: api-gateway
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        version: v1
+    spec:
+      containers:
+      - name: api-gateway
+        image: ghcr.io/dataflux/api-gateway:latest
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: dataflux
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - port: 80
+    targetPort: 80
+  - port: 443
+    targetPort: 443
+  type: LoadBalancer

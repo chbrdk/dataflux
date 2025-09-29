@@ -1,0 +1,297 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dataflux
+  labels:
+    name: dataflux
+    environment: production
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dataflux-config
+  namespace: dataflux
+data:
+  # Database Configuration
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "dataflux_user"
+  POSTGRES_DB: "dataflux"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  
+  # Kafka Configuration
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+  
+  # MinIO Configuration
+  MINIO_ENDPOINT: "minio-service:9000"
+  MINIO_BUCKET: "dataflux-assets"
+  
+  # Weaviate Configuration
+  WEAVIATE_HOST: "weaviate-service"
+  WEAVIATE_PORT: "8080"
+  
+  # Neo4j Configuration
+  NEO4J_HOST: "neo4j-service"
+  NEO4J_PORT: "7687"
+  NEO4J_USER: "neo4j"
+  
+  # ClickHouse Configuration
+  CLICKHOUSE_HOST: "clickhouse-service"
+  CLICKHOUSE_PORT: "9000"
+  CLICKHOUSE_USER: "default"
+  
+  # Service URLs
+  INGESTION_SERVICE_URL: "http://ingestion-service:8002"
+  QUERY_SERVICE_URL: "http://query-service:8003"
+  ANALYSIS_SERVICE_URL: "http://analysis-service:8004"
+  AUTH_SERVICE_URL: "http://auth-service:8006"
+  MCP_SERVER_URL: "http://mcp-server:2015"
+  
+  # Environment
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "info"
+  
+  # Performance Settings
+  MAX_WORKERS: "4"
+  WORKER_TIMEOUT: "300"
+  REQUEST_TIMEOUT: "30"
+  
+  # Security Settings
+  CORS_ORIGINS: "https://dataflux.com,https://app.dataflux.com"
+  RATE_LIMIT_REQUESTS: "1000"
+  RATE_LIMIT_WINDOW: "3600"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dataflux-secrets
+  namespace: dataflux
+type: Opaque
+data:
+  # Base64 encoded secrets (change in production!)
+  POSTGRES_PASSWORD: ZGF0YWZsdXhfcGFzcw==  # dataflux_pass
+  REDIS_PASSWORD: ZGF0YWZsdXhfcGFzcw==      # dataflux_pass
+  MINIO_ACCESS_KEY: bWluaW9hZG1pbg==        # minioadmin
+  MINIO_SECRET_KEY: bWluaW9hZG1pbg==        # minioadmin
+  NEO4J_PASSWORD: ZGF0YWZsdXhfcGFzcw==      # dataflux_pass
+  JWT_SECRET_KEY: c3VwZXItc2VjcmV0LWtleS1jaGFuZ2UtaW4tcHJvZHVjdGlvbg==  # super-secret-key-change-in-production
+  CLICKHOUSE_PASSWORD: ""  # Empty for default user
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: dataflux
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        # Logging
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+        
+        access_log /var/log/nginx/access.log main;
+        
+        # Performance
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 100M;
+        
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/json
+            application/javascript
+            application/xml+rss
+            application/atom+xml
+            image/svg+xml;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+        limit_req_zone $binary_remote_addr zone=upload:10m rate=5r/s;
+        
+        # Upstream services
+        upstream ingestion-service {
+            server ingestion-service:8002;
+        }
+        
+        upstream query-service {
+            server query-service:8003;
+        }
+        
+        upstream analysis-service {
+            server analysis-service:8004;
+        }
+        
+        upstream auth-service {
+            server auth-service:8006;
+        }
+        
+        upstream mcp-server {
+            server mcp-server:2015;
+        }
+        
+        upstream web-ui {
+            server web-ui:3000;
+        }
+        
+        # Main server block
+        server {
+            listen 80;
+            server_name dataflux.com www.dataflux.com;
+            
+            # Redirect HTTP to HTTPS
+            return 301 https://$server_name$request_uri;
+        }
+        
+        server {
+            listen 443 ssl http2;
+            server_name dataflux.com www.dataflux.com;
+            
+            # SSL configuration
+            ssl_certificate /etc/nginx/ssl/cert.pem;
+            ssl_certificate_key /etc/nginx/ssl/key.pem;
+            ssl_protocols TLSv1.2 TLSv1.3;
+            ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+            ssl_prefer_server_ciphers off;
+            ssl_session_cache shared:SSL:10m;
+            ssl_session_timeout 10m;
+            
+            # Security headers
+            add_header X-Frame-Options DENY;
+            add_header X-Content-Type-Options nosniff;
+            add_header X-XSS-Protection "1; mode=block";
+            add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+            
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Web UI
+            location / {
+                proxy_pass http://web-ui;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+            
+            # Authentication endpoints
+            location /auth/ {
+                limit_req zone=api burst=20 nodelay;
+                proxy_pass http://auth-service/auth/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_timeout 30s;
+            }
+            
+            # Asset upload endpoints
+            location /api/v1/assets {
+                limit_req zone=upload burst=10 nodelay;
+                proxy_pass http://ingestion-service/api/v1/assets;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_timeout 300s;
+                proxy_read_timeout 300s;
+            }
+            
+            # Search endpoints
+            location /api/v1/search {
+                limit_req zone=api burst=50 nodelay;
+                proxy_pass http://query-service/api/v1/search;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_timeout 30s;
+            }
+            
+            # Similar content endpoints
+            location /api/v1/similar {
+                limit_req zone=api burst=30 nodelay;
+                proxy_pass http://query-service/api/v1/similar;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_timeout 30s;
+            }
+            
+            # Analysis endpoints
+            location /api/v1/analysis/ {
+                limit_req zone=api burst=20 nodelay;
+                proxy_pass http://analysis-service/api/v1/analysis/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_timeout 30s;
+            }
+            
+            # MCP endpoints
+            location /mcp/ {
+                limit_req zone=api burst=10 nodelay;
+                proxy_pass http://mcp-server/mcp/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_timeout 30s;
+            }
+            
+            # Stats and monitoring
+            location /api/v1/stats {
+                limit_req zone=api burst=10 nodelay;
+                proxy_pass http://query-service/api/v1/stats;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_timeout 30s;
+            }
+            
+            # Metrics endpoints
+            location /metrics {
+                proxy_pass http://prometheus:9090/metrics;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+        }
+    }

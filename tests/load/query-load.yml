@@ -1,0 +1,91 @@
+# DataFlux Query Service Load Testing Configuration
+# Artillery.js configuration for query performance testing
+
+config:
+  target: 'http://localhost:8003'
+  phases:
+    - duration: 30
+      arrivalRate: 2
+      name: "Warm up"
+    - duration: 60
+      arrivalRate: 5
+      name: "Ramp up"
+    - duration: 180
+      arrivalRate: 15
+      name: "Sustained load"
+    - duration: 30
+      arrivalRate: 2
+      name: "Cool down"
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+  plugins:
+    metrics-by-endpoint: {}
+
+scenarios:
+  - name: "Health Check"
+    weight: 10
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+
+  - name: "Search Query"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/v1/search"
+          json:
+            query: "{{ $randomString() }}"
+            media_type: "all"
+            limit: 10
+            offset: 0
+          expect:
+            - statusCode: 200
+            - hasProperty: "results"
+
+  - name: "Video Search"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/v1/search"
+          json:
+            query: "video {{ $randomString() }}"
+            media_type: "video"
+            limit: 20
+            offset: 0
+          expect:
+            - statusCode: 200
+
+  - name: "Image Search"
+    weight: 15
+    flow:
+      - post:
+          url: "/api/v1/search"
+          json:
+            query: "image {{ $randomString() }}"
+            media_type: "image"
+            limit: 15
+            offset: 0
+          expect:
+            - statusCode: 200
+
+  - name: "Similar Assets"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/v1/similar"
+          json:
+            asset_id: "{{ $randomString() }}"
+            limit: 5
+          expect:
+            - statusCode: [200, 404]
+
+  - name: "Get Segment"
+    weight: 5
+    flow:
+      - get:
+          url: "/api/v1/segments/{{ $randomString() }}"
+          expect:
+            - statusCode: [200, 404]

@@ -1,0 +1,601 @@
+# DataFlux Docker Compose Configuration
+
+x-common-variables: &common-variables
+  TZ: ${TZ:-Europe/Berlin}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+services:
+  # =================================
+  # Core Databases
+  # =================================
+  
+  postgres:
+    image: postgres:16-alpine
+    container_name: dataflux-postgres
+    hostname: postgres
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      POSTGRES_DB: ${POSTGRES_DB:-dataflux}
+      POSTGRES_USER: ${POSTGRES_USER:-dataflux_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dataflux_pass}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=en_US.UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "2001:5432"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dataflux_user} -d ${POSTGRES_DB:-dataflux}"]
+    networks:
+      - dataflux-network
+
+  weaviate:
+    image: semitechnologies/weaviate:1.24.0
+    container_name: dataflux-weaviate
+    hostname: weaviate
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      QUERY_DEFAULTS_LIMIT: 20
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      ENABLE_MODULES: 'text2vec-openai'
+      CLUSTER_HOSTNAME: 'weaviate'
+      AUTHENTICATION_APIKEY_ENABLED: 'true'
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:-dataflux-key}
+      AUTHENTICATION_APIKEY_USERS: ${WEAVIATE_API_USER:-dataflux-user}
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    ports:
+      - "2005:8080"
+      - "2006:50051"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready"]
+    networks:
+      - dataflux-network
+
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: dataflux-neo4j
+    hostname: neo4j
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-dataflux_pass}
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 2G
+      NEO4J_dbms_memory_pagecache_size: 512m
+      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_plugins:/plugins
+    ports:
+      - "2007:7474"
+      - "2008:7687"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USER:-neo4j}", "-p", "${NEO4J_PASSWORD:-dataflux_pass}", "RETURN 1"]
+    networks:
+      - dataflux-network
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: dataflux-redis
+    hostname: redis
+    restart: unless-stopped
+    ports:
+      - "2002:6379"
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-dataflux_pass}
+      --maxmemory ${REDIS_MAX_MEMORY:-2gb}
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "--raw", "ping"]
+    networks:
+      - dataflux-network
+
+  # =================================
+  # Message Queue & Streaming
+  # =================================
+  
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: dataflux-kafka
+    hostname: kafka
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+      - ../scripts/create-topics.sh:/docker-entrypoint-initdb.d/create-topics.sh:ro
+    ports:
+      - "2009:9092"
+      - "2010:9094"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+    networks:
+      - dataflux-network
+
+  # =================================
+  # Object Storage
+  # =================================
+  
+  minio:
+    image: minio/minio:latest
+    container_name: dataflux-minio
+    hostname: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      <<: *common-variables
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_DEFAULT_BUCKETS: ${MINIO_BUCKETS:-dataflux-assets,dataflux-thumbnails,dataflux-proxies}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "2003:9000"
+      - "2004:9001"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "mc", "ready", "local"]
+    networks:
+      - dataflux-network
+
+  # =================================
+  # Analytics
+  # =================================
+  
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1-alpine
+    container_name: dataflux-clickhouse
+    hostname: clickhouse
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-dataflux_analytics}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-dataflux_user}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-dataflux_pass}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    ports:
+      - "2011:8123"
+      - "2012:9000"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+    networks:
+      - dataflux-network
+
+  # =================================
+  # DataFlux Services
+  # =================================
+  
+  api-gateway:
+    build:
+      context: ../services/api-gateway
+      dockerfile: Dockerfile
+    container_name: dataflux-api-gateway
+    hostname: api-gateway
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      UPSTREAM_INGESTION: ingestion-service:8002
+      UPSTREAM_QUERY: query-service:8003
+      UPSTREAM_ANALYSIS: analysis-service:8004
+      UPSTREAM_MCP: mcp-server:8004
+      UPSTREAM_WEB_UI: web-ui:3000
+    volumes:
+      - ../services/api-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../services/api-gateway/configs:/etc/nginx/conf.d:ro
+    ports:
+      - "2013:80"
+      - "2014:443"
+    depends_on:
+      - ingestion-service
+      - query-service
+      - analysis-service
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "nginx", "-t"]
+    networks:
+      - dataflux-network
+
+  ingestion-service:
+    build:
+      context: ../services/ingestion-service
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-development}
+    container_name: dataflux-ingestion
+    hostname: ingestion-service
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      SERVICE_NAME: ingestion-service
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dataflux_user}:${POSTGRES_PASSWORD:-dataflux_pass}@postgres:5432/${POSTGRES_DB:-dataflux}
+      REDIS_URL: redis://default:${REDIS_PASSWORD:-dataflux_pass}@redis:6379/0
+      KAFKA_BROKERS: kafka:9092
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - ../services/ingestion-service:/app
+      - ingestion_temp:/tmp/ingestion
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+    networks:
+      - dataflux-network
+
+  analysis-service:
+    build:
+      context: ../services/analysis-service
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-development}
+    container_name: dataflux-analysis
+    hostname: analysis-service
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      <<: *common-variables
+      SERVICE_NAME: analysis-service
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dataflux_user}:${POSTGRES_PASSWORD:-dataflux_pass}@postgres:5432/${POSTGRES_DB:-dataflux}
+      WEAVIATE_URL: http://weaviate:8080
+      WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:-dataflux-key}
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: analysis-consumers
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MODEL_CACHE_DIR: /models
+    volumes:
+      - ../services/analysis-service:/app
+      - model_cache:/models
+      - analysis_temp:/tmp/analysis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+    networks:
+      - dataflux-network
+
+  query-service:
+    build:
+      context: ../services/query-service
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-development}
+    container_name: dataflux-query
+    hostname: query-service
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      SERVICE_NAME: query-service
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dataflux_user}:${POSTGRES_PASSWORD:-dataflux_pass}@postgres:5432/${POSTGRES_DB:-dataflux}
+      WEAVIATE_URL: http://weaviate:8080
+      WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:-dataflux-key}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-dataflux_pass}
+      REDIS_URL: redis://default:${REDIS_PASSWORD:-dataflux_pass}@redis:6379/0
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-dataflux_user}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-dataflux_pass}
+    volumes:
+      - ../services/query-service:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      weaviate:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+    networks:
+      - dataflux-network
+
+  mcp-server:
+    build:
+      context: ../services/mcp-server
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-development}
+    container_name: dataflux-mcp
+    hostname: mcp-server
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      SERVICE_NAME: mcp-server
+      MCP_SERVER_NAME: dataflux-mcp
+      MCP_SERVER_VERSION: 1.0.0
+      QUERY_SERVICE_URL: http://query-service:8002
+      INGESTION_SERVICE_URL: http://ingestion-service:8001
+      REDIS_URL: redis://default:${REDIS_PASSWORD:-dataflux_pass}@redis:6379/0
+    volumes:
+      - ../services/mcp-server:/app
+      - ../services/mcp-server/node_modules:/app/node_modules
+    depends_on:
+      query-service:
+        condition: service_healthy
+      ingestion-service:
+        condition: service_healthy
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+    ports:
+      - "2015:8004"
+      - "2016:8005"
+    networks:
+      - dataflux-network
+
+  # =================================
+  # Development Tools
+  # =================================
+  
+  pgadmin:
+    profiles: ["dev", "tools"]
+    image: dpage/pgadmin4:latest
+    container_name: dataflux-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@dataflux.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ../scripts/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "2017:80"
+    depends_on:
+      - postgres
+    networks:
+      - dataflux-network
+
+  kafka-ui:
+    profiles: ["dev", "tools"]
+    image: provectuslabs/kafka-ui:latest
+    container_name: dataflux-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: dataflux
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    ports:
+      - "2018:8080"
+    depends_on:
+      - kafka
+    networks:
+      - dataflux-network
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: ../services/auth-service
+      dockerfile: Dockerfile
+    ports:
+      - "8006:8006"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=dataflux_user
+      - POSTGRES_PASSWORD=dataflux_pass
+      - POSTGRES_DB=dataflux
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=dataflux_pass
+      - JWT_SECRET_KEY=your-secret-key-change-in-production
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - dataflux-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis-commander:
+    profiles: ["dev", "tools"]
+    image: rediscommander/redis-commander:latest
+    container_name: dataflux-redis-commander
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-dataflux_pass}
+    ports:
+      - "2019:8081"
+    depends_on:
+      - redis
+    networks:
+      - dataflux-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: dataflux-prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+    ports:
+      - "2020:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - dataflux-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: dataflux-grafana
+    hostname: grafana
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_INSTALL_PLUGINS: grafana-piechart-panel,grafana-worldmap-panel
+    ports:
+      - "2021:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - dataflux-network
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: dataflux-node-exporter
+    hostname: node-exporter
+    restart: unless-stopped
+    ports:
+      - "2022:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - dataflux-network
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: dataflux-cadvisor
+    hostname: cadvisor
+    restart: unless-stopped
+    ports:
+      - "2023:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - dataflux-network
+
+  web-ui:
+    build:
+      context: ../services/web-ui
+      dockerfile: Dockerfile
+    container_name: dataflux-web-ui
+    hostname: web-ui
+    restart: unless-stopped
+    environment:
+      <<: *common-variables
+      NODE_ENV: ${NODE_ENV:-development}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:2013}
+      NEXT_PUBLIC_INGESTION_URL: ${NEXT_PUBLIC_INGESTION_URL:-http://localhost:8002}
+      NEXT_PUBLIC_QUERY_URL: ${NEXT_PUBLIC_QUERY_URL:-http://localhost:8003}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+    networks:
+      - dataflux-network
+
+volumes:
+  postgres_data:
+  weaviate_data:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_plugins:
+  redis_data:
+  kafka_data:
+  minio_data:
+  clickhouse_data:
+  clickhouse_logs:
+  pgadmin_data:
+  model_cache:
+  ingestion_temp:
+  analysis_temp:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  dataflux-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16

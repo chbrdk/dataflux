@@ -1,0 +1,750 @@
+# Ingestion Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-service
+  namespace: dataflux
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ingestion-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-service
+    spec:
+      containers:
+      - name: ingestion-service
+        image: dataflux/ingestion:latest
+        ports:
+        - containerPort: 8002
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: REDIS_PASSWORD
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: MINIO_ENDPOINT
+        - name: MINIO_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: MINIO_BUCKET
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: MINIO_ACCESS_KEY
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: MINIO_SECRET_KEY
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: ENVIRONMENT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: LOG_LEVEL
+        - name: MAX_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: MAX_WORKERS
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-service
+  namespace: dataflux
+spec:
+  selector:
+    app: ingestion-service
+  ports:
+  - port: 8002
+    targetPort: 8002
+  type: ClusterIP
+---
+# Query Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-service
+  namespace: dataflux
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: query-service
+  template:
+    metadata:
+      labels:
+        app: query-service
+    spec:
+      containers:
+      - name: query-service
+        image: dataflux/query:latest
+        ports:
+        - containerPort: 8003
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: REDIS_PASSWORD
+        - name: WEAVIATE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: WEAVIATE_HOST
+        - name: WEAVIATE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: WEAVIATE_PORT
+        - name: NEO4J_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_HOST
+        - name: NEO4J_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_PORT
+        - name: NEO4J_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_USER
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: NEO4J_PASSWORD
+        - name: CLICKHOUSE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: CLICKHOUSE_HOST
+        - name: CLICKHOUSE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: CLICKHOUSE_PORT
+        - name: CLICKHOUSE_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: CLICKHOUSE_USER
+        - name: CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: CLICKHOUSE_PASSWORD
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: ENVIRONMENT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: LOG_LEVEL
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: query-service
+  namespace: dataflux
+spec:
+  selector:
+    app: query-service
+  ports:
+  - port: 8003
+    targetPort: 8003
+  type: ClusterIP
+---
+# Analysis Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analysis-service
+  namespace: dataflux
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: analysis-service
+  template:
+    metadata:
+      labels:
+        app: analysis-service
+    spec:
+      containers:
+      - name: analysis-service
+        image: dataflux/analysis:latest
+        ports:
+        - containerPort: 8004
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: MINIO_ENDPOINT
+        - name: MINIO_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: MINIO_BUCKET
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: MINIO_ACCESS_KEY
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: MINIO_SECRET_KEY
+        - name: WEAVIATE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: WEAVIATE_HOST
+        - name: WEAVIATE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: WEAVIATE_PORT
+        - name: NEO4J_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_HOST
+        - name: NEO4J_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_PORT
+        - name: NEO4J_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_USER
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: NEO4J_PASSWORD
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: ENVIRONMENT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: LOG_LEVEL
+        - name: MAX_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: MAX_WORKERS
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analysis-service
+  namespace: dataflux
+spec:
+  selector:
+    app: analysis-service
+  ports:
+  - port: 8004
+    targetPort: 8004
+  type: ClusterIP
+---
+# Auth Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: dataflux
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: dataflux/auth:latest
+        ports:
+        - containerPort: 8006
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: REDIS_PASSWORD
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: JWT_SECRET_KEY
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: ENVIRONMENT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: LOG_LEVEL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8006
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8006
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: dataflux
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - port: 8006
+    targetPort: 8006
+  type: ClusterIP
+---
+# MCP Server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: dataflux
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+    spec:
+      containers:
+      - name: mcp-server
+        image: dataflux/mcp:latest
+        ports:
+        - containerPort: 2015
+        - containerPort: 2016
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: POSTGRES_DB
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: REDIS_PASSWORD
+        - name: WEAVIATE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: WEAVIATE_HOST
+        - name: WEAVIATE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: WEAVIATE_PORT
+        - name: NEO4J_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_HOST
+        - name: NEO4J_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_PORT
+        - name: NEO4J_USER
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: NEO4J_USER
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dataflux-secrets
+              key: NEO4J_PASSWORD
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: ENVIRONMENT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: dataflux-config
+              key: LOG_LEVEL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 2015
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 2015
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  namespace: dataflux
+spec:
+  selector:
+    app: mcp-server
+  ports:
+  - name: http
+    port: 2015
+    targetPort: 2015
+  - name: websocket
+    port: 2016
+    targetPort: 2016
+  type: ClusterIP
+---
+# Web UI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-ui
+  namespace: dataflux
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-ui
+  template:
+    metadata:
+      labels:
+        app: web-ui
+    spec:
+      containers:
+      - name: web-ui
+        image: dataflux/web-ui:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: NEXT_PUBLIC_API_URL
+          value: "https://dataflux.com"
+        - name: NEXT_PUBLIC_WS_URL
+          value: "wss://dataflux.com/mcp"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-ui
+  namespace: dataflux
+spec:
+  selector:
+    app: web-ui
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: ClusterIP
