@@ -46,7 +46,7 @@ const Assets: React.FC = () => {
   const { data: assets, isLoading } = useQuery({
     queryKey: ['assets', filters],
     queryFn: async () => {
-      const response = await fetch('http://localhost:8002/api/v1/assets')
+      const response = await fetch('http://localhost:2013/api/v1/assets')
       if (!response.ok) {
         throw new Error('Failed to fetch assets')
       }

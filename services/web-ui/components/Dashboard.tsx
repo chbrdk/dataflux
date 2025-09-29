@@ -22,11 +22,11 @@ const Dashboard: React.FC = () => {
     queryKey: ['dashboard-stats'],
     queryFn: async () => {
       // Fetch real assets data
-      const assetsResponse = await fetch('http://localhost:8002/api/v1/assets')
+      const assetsResponse = await fetch('http://localhost:2013/api/v1/assets')
       const assets = await assetsResponse.json()
       
       // Fetch service health
-      const ingestionHealth = await fetch('http://localhost:8002/health').then(r => r.json()).catch(() => ({ status: 'down', uptime: '0%' }))
+      const ingestionHealth = await fetch('http://localhost:2013/health').then(r => r.json()).catch(() => ({ status: 'down', uptime: '0%' }))
       const queryHealth = await fetch('http://localhost:8003/health').then(r => r.json()).catch(() => ({ status: 'down', uptime: '0%' }))
       
       const totalSize = (assets.reduce((sum: number, asset: any) => sum + asset.file_size, 0) / 1024 / 1024 / 1024).toFixed(1) + ' GB'
@@ -110,7 +110,7 @@ const Dashboard: React.FC = () => {
   ]
 
   const serviceCards = [
-    { name: 'Ingestion Service', port: '8002', icon: Upload },
+    { name: 'Ingestion Service', port: '2013', icon: Upload },
     { name: 'Query Service', port: '8003', icon: Search },
     { name: 'Analysis Service', port: '8004', icon: Brain },
     { name: 'MCP Server', port: '2015', icon: Database }

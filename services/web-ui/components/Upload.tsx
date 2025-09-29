@@ -36,7 +36,7 @@ const Upload: React.FC = () => {
       formData.append('context', 'Web UI Upload')
       formData.append('priority', '5')
 
-      const response = await fetch('http://localhost:8002/api/v1/assets', {
+      const response = await fetch('http://localhost:2013/api/v1/assets', {
         method: 'POST',
         body: formData,
         headers: {

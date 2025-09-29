@@ -64,7 +64,7 @@ const Sidebar: React.FC = () => {
       label: 'Ingestion Service',
       icon: Upload,
       status: 'running',
-      port: '8002'
+      port: '2013'
     },
     {
       id: 'query',
