@@ -1,5 +1,5 @@
 import React from 'react'
-import { useAppStore } from '../store/appStore'
+import { useAppStore, ViewType } from '../store/appStore'
 import {
   LayoutDashboard,
   Upload,
@@ -153,7 +153,7 @@ const Sidebar: React.FC = () => {
                 return (
                   <button
                     key={item.id}
-                    onClick={() => setCurrentView(item.id)}
+                    onClick={() => setCurrentView(item.id as ViewType)}
                     className={`
                       w-full flex items-center px-3 py-2 rounded-lg text-sm font-medium transition-colors
                       ${isActive 
