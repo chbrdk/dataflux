@@ -7,6 +7,11 @@ RUN apk add --no-cache curl
 # Set working directory
 WORKDIR /app
 
+# Set environment variables for Docker BEFORE copying files
+ENV NEXT_PUBLIC_API_URL=http://host.docker.internal:2013
+ENV NEXT_PUBLIC_INGESTION_URL=http://host.docker.internal:2013
+ENV NEXT_PUBLIC_QUERY_URL=http://host.docker.internal:8003
+
 # Copy built application from local build
 COPY .next .next
 COPY package.json package.json
@@ -15,11 +20,6 @@ COPY next.config.js next.config.js
 
 # Install only production dependencies
 RUN npm ci --omit=dev
-
-# Set environment variables for Docker
-ENV NEXT_PUBLIC_API_URL=http://host.docker.internal:2013
-ENV NEXT_PUBLIC_INGESTION_URL=http://host.docker.internal:2013
-ENV NEXT_PUBLIC_QUERY_URL=http://host.docker.internal:8003
 
 # Expose port
 EXPOSE 3000

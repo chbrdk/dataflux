@@ -16,7 +16,8 @@ import {
   Video,
   Music,
   Clock,
-  Calendar
+  Calendar,
+  RefreshCw
 } from 'lucide-react'
 
 interface Asset {
@@ -43,15 +44,17 @@ const Assets: React.FC = () => {
     dateRange: ''
   })
 
-  const { data: assetsData, isLoading } = useQuery({
-    queryKey: ['assets', filters],
+  const { data: assetsData, isLoading, refetch } = useQuery({
+    queryKey: ['assets'],
     queryFn: async () => {
-      const response = await fetch('http://localhost:2013/api/v1/assets')
+      const response = await fetch('/api/v1/assets')
       if (!response.ok) {
         throw new Error('Failed to fetch assets')
       }
       return response.json()
-    }
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 30000 // 30 seconds
   })
 
   const assets = assetsData?.assets || []
@@ -123,8 +126,17 @@ const Assets: React.FC = () => {
           <h2 className="text-3xl font-bold text-gray-900">Assets</h2>
           <p className="text-gray-600 mt-1">Manage your media files</p>
         </div>
-        <div className="text-sm text-gray-500">
-          {assets?.length || 0} files
+        <div className="flex items-center space-x-2">
+          <div className="text-sm text-gray-500">
+            {assets?.length || 0} files
+          </div>
+          <button
+            onClick={() => refetch()}
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
+            title="Refresh assets"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
