@@ -43,7 +43,7 @@ const Assets: React.FC = () => {
     dateRange: ''
   })
 
-  const { data: assets, isLoading } = useQuery({
+  const { data: assetsData, isLoading } = useQuery({
     queryKey: ['assets', filters],
     queryFn: async () => {
       const response = await fetch('http://localhost:2013/api/v1/assets')
@@ -53,6 +53,8 @@ const Assets: React.FC = () => {
       return response.json()
     }
   })
+
+  const assets = assetsData?.assets || []
 
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith('video/')) return Video
