@@ -17,8 +17,10 @@ import {
   Music,
   Clock,
   Calendar,
-  RefreshCw
+  RefreshCw,
+  Brain
 } from 'lucide-react'
+import AnalysisResults from './AnalysisResults'
 
 interface Asset {
   id: string
@@ -43,6 +45,7 @@ const Assets: React.FC = () => {
     type: '',
     dateRange: ''
   })
+  const [selectedAssetForAnalysis, setSelectedAssetForAnalysis] = useState<string | null>(null)
 
   const { data: assetsData, isLoading, refetch } = useQuery({
     queryKey: ['assets'],
@@ -64,6 +67,10 @@ const Assets: React.FC = () => {
     if (mimeType.startsWith('image/')) return Image
     if (mimeType.startsWith('audio/')) return Music
     return FileText
+  }
+
+  const handleShowAnalysis = (assetId: string) => {
+    setSelectedAssetForAnalysis(assetId)
   }
 
   const getStatusColor = (status: string) => {
@@ -287,6 +294,13 @@ const Assets: React.FC = () => {
                     </button>
                     
                     <div className="flex items-center space-x-2">
+                      <button 
+                        onClick={() => handleShowAnalysis(asset.id)}
+                        className="p-1 text-purple-400 hover:text-purple-600"
+                        title="Analyse-Ergebnisse anzeigen"
+                      >
+                        <Brain className="w-4 h-4" />
+                      </button>
                       <button className="p-1 text-gray-400 hover:text-gray-600">
                         <Download className="w-4 h-4" />
                       </button>
@@ -377,6 +391,14 @@ const Assets: React.FC = () => {
           <h3 className="text-lg font-medium text-gray-900 mb-2">No assets found</h3>
           <p className="text-gray-600">Upload some files to get started</p>
         </div>
+      )}
+
+      {/* Analysis Results Modal */}
+      {selectedAssetForAnalysis && (
+        <AnalysisResults
+          assetId={selectedAssetForAnalysis}
+          onClose={() => setSelectedAssetForAnalysis(null)}
+        />
       )}
     </div>
   )

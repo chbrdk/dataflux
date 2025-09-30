@@ -360,6 +360,91 @@ async def get_asset(
         logger.error("Failed to get asset", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to get asset: {str(e)}")
 
+# Analysis results endpoint
+@app.get("/api/v1/assets/{asset_id}/analysis")
+async def get_asset_analysis(
+    asset_id: str,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Get analysis results for an asset"""
+    try:
+        # Get asset info
+        asset = await db.fetchrow("""
+            SELECT a.*, e.created_at
+            FROM assets a
+            JOIN entities e ON a.id = e.id
+            WHERE a.id = $1
+        """, asset_id)
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        # Get segments for this asset
+        segments = await db.fetch("""
+            SELECT s.*
+            FROM segments s
+            WHERE s.asset_id = $1
+            ORDER BY s.sequence_number
+        """, asset_id)
+        
+        # Get features for this asset
+        features = await db.fetch("""
+            SELECT f.*
+            FROM features f
+            JOIN segments s ON f.segment_id = s.id
+            WHERE s.asset_id = $1
+            ORDER BY f.confidence DESC
+        """, asset_id)
+        
+        # Format results
+        analysis_results = {
+            "asset_id": str(asset_id),
+            "filename": asset['filename'],
+            "mime_type": asset['mime_type'],
+            "processing_status": asset['processing_status'],
+            "segments": [],
+            "features": [],
+            "summary": {
+                "total_segments": len(segments),
+                "total_features": len(features),
+                "analysis_completed": asset['processing_status'] == 'completed'
+            }
+        }
+        
+        # Process segments
+        for segment in segments:
+            segment_data = {
+                "id": str(segment['id']),
+                "type": segment['segment_type'],
+                "sequence_number": segment['sequence_number'],
+                "start_marker": segment['start_marker'] if segment['start_marker'] else {},
+                "end_marker": segment['end_marker'] if segment['end_marker'] else {},
+                "confidence": float(segment['confidence_score']) if segment['confidence_score'] else None,
+                "duration": float(segment['duration']) if segment['duration'] else None
+            }
+            analysis_results["segments"].append(segment_data)
+        
+        # Process features
+        for feature in features:
+            feature_data = {
+                "id": str(feature['id']),
+                "type": feature['feature_type'],
+                "domain": feature['feature_domain'],
+                "confidence": float(feature['confidence']) if feature['confidence'] else None,
+                "data": feature['feature_data'] if feature['feature_data'] else {},
+                "analyzer_version": feature['analyzer_version'],
+                "created_at": feature['created_at'].isoformat() if feature['created_at'] else None
+            }
+            analysis_results["features"].append(feature_data)
+        
+        return analysis_results
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get analysis results", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
