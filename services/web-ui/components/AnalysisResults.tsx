@@ -58,7 +58,7 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ assetId, onClose }) =
   const { data: analysisData, isLoading, error } = useQuery<AnalysisData>({
     queryKey: ['analysis', assetId],
     queryFn: async () => {
-      const response = await fetch(`/api/v1/assets/${assetId}/analysis`)
+      const response = await fetch(`http://localhost:2013/api/v1/assets/${assetId}/analysis`)
       if (!response.ok) {
         throw new Error('Failed to fetch analysis results')
       }

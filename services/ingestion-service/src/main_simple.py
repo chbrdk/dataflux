@@ -160,12 +160,36 @@ async def upload_asset(
 ):
     """Upload a new asset for processing"""
     try:
-        # Read file content
+        # Insert new entity first to get ID for storage path
+        entity_id = await db.fetchval("""
+            INSERT INTO entities (entity_type, metadata)
+            VALUES ('asset', $1)
+            RETURNING id
+        """, json.dumps({"upload_context": context}))
+        
+        # Save file to local storage and calculate hash while streaming
+        storage_dir = "/tmp/dataflux_storage"
+        os.makedirs(storage_dir, exist_ok=True)
+        storage_path = os.path.join(storage_dir, f"{entity_id}_{file.filename}")
+        
+        # Read entire file content
         content = await file.read()
+        
+        # Write to disk with explicit flush
+        with open(storage_path, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        
+        # Calculate hash
+        import hashlib
+        file_hash = hashlib.sha256(content).hexdigest()
         file_size = len(content)
         
-        # Generate file hash
-        file_hash = hashlib.sha256(content).hexdigest()
+        print(f"🔥 HASH: {file_hash}, SIZE: {file_size}")
+        
+        # Debug logging
+        logger.info(f"File upload: {file.filename}, size: {file_size}, hash: {file_hash}")
         
         # Detect MIME type
         mime_type, _ = mimetypes.guess_type(file.filename)
@@ -174,15 +198,19 @@ async def upload_asset(
         
         # Check for duplicates
         existing_asset = await db.fetchrow(
-            "SELECT id FROM assets WHERE file_hash = $1",
+            "SELECT id, filename FROM assets WHERE file_hash = $1",
             file_hash
         )
         
         if existing_asset:
-            logger.info("Duplicate file detected", hash=file_hash)
+            logger.info(f"Duplicate file detected: {file_hash}")
+            # Delete the newly created entity and file since it's a duplicate
+            await db.execute("DELETE FROM entities WHERE id = $1", entity_id)
+            os.remove(storage_path)
+            
             return AssetResponse(
                 id=str(existing_asset['id']),
-                filename=file.filename,
+                filename=existing_asset['filename'],
                 file_size=file_size,
                 mime_type=mime_type,
                 file_hash=file_hash,
@@ -190,19 +218,12 @@ async def upload_asset(
                 created_at=datetime.utcnow()
             )
         
-        # Insert new entity first
-        entity_id = await db.fetchval("""
-            INSERT INTO entities (entity_type, metadata)
-            VALUES ('asset', $1)
-            RETURNING id
-        """, json.dumps({"upload_context": context}))
-        
         # Insert new asset
         asset_id = await db.fetchval("""
             INSERT INTO assets (id, filename, file_hash, file_size, mime_type, storage_path, upload_context, processing_status, processing_priority)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id
-        """, entity_id, file.filename, file_hash, file_size, mime_type, f"/storage/{file_hash}", context, "queued", priority)
+        """, entity_id, file.filename, file_hash, file_size, mime_type, storage_path, context, "queued", priority)
         
         # Cache in Redis
         await redis.setex(f"asset:{asset_id}", 3600, json.dumps({
@@ -387,12 +408,11 @@ async def get_asset_analysis(
             ORDER BY s.sequence_number
         """, asset_id)
         
-        # Get features for this asset
+        # Get features for this asset (both direct and segment-based)
         features = await db.fetch("""
             SELECT f.*
             FROM features f
-            JOIN segments s ON f.segment_id = s.id
-            WHERE s.asset_id = $1
+            WHERE f.asset_id = $1
             ORDER BY f.confidence DESC
         """, asset_id)
         
@@ -445,11 +465,175 @@ async def get_asset_analysis(
         logger.error("Failed to get analysis results", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
+# Download asset file endpoint
+@app.get("/api/v1/assets/{asset_id}/download")
+async def download_asset(
+    asset_id: str,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Download asset file"""
+    try:
+        # Get asset info
+        asset = await db.fetchrow("""
+            SELECT a.*, e.created_at
+            FROM assets a
+            JOIN entities e ON a.id = e.id
+            WHERE a.id = $1
+        """, asset_id)
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        storage_path = asset['storage_path']
+        if not os.path.exists(storage_path):
+            raise HTTPException(status_code=404, detail="File not found on disk")
+        
+        # Read file and return as bytes directly (avoid FileResponse bug)
+        with open(storage_path, "rb") as f:
+            file_data = f.read()
+        
+        from fastapi.responses import Response
+        return Response(
+            content=file_data,
+            media_type=asset['mime_type'],
+            headers={
+                'Content-Disposition': f'attachment; filename="{asset["filename"]}"'
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to download asset", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Delete asset endpoint
+@app.delete("/api/v1/assets/{asset_id}")
+async def delete_asset(
+    asset_id: str,
+    db: asyncpg.Connection = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """Delete asset and all associated data"""
+    try:
+        # Get asset info before deletion
+        asset = await db.fetchrow("""
+            SELECT storage_path, filename
+            FROM assets
+            WHERE id = $1
+        """, asset_id)
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        # Delete from database in correct order
+        # First delete embeddings (via entity_id CASCADE)
+        # Then delete features and segments (via asset_id)
+        # Then delete assets and entities
+        
+        await db.execute("""
+            DELETE FROM features WHERE asset_id = $1
+        """, asset_id)
+        
+        await db.execute("""
+            DELETE FROM segments WHERE asset_id = $1
+        """, asset_id)
+        
+        await db.execute("""
+            DELETE FROM assets WHERE id = $1
+        """, asset_id)
+        
+        # Delete entity (this will cascade to embeddings)
+        await db.execute("""
+            DELETE FROM entities WHERE id = $1
+        """, asset_id)
+        
+        # Delete file from disk
+        storage_path = asset['storage_path']
+        if os.path.exists(storage_path):
+            os.remove(storage_path)
+            logger.info(f"Deleted file from disk: {storage_path}")
+        
+        # Delete from Redis cache
+        await redis.delete(f"asset:{asset_id}")
+        
+        logger.info("Asset deleted successfully", asset_id=asset_id, filename=asset['filename'])
+        
+        return {
+            "success": True,
+            "message": f"Asset {asset['filename']} deleted successfully",
+            "asset_id": asset_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error("Failed to delete asset", error=str(e), asset_id=asset_id, traceback=traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Bulk delete assets endpoint
+@app.post("/api/v1/assets/bulk-delete")
+async def bulk_delete_assets(
+    asset_ids: List[str],
+    db: asyncpg.Connection = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """Delete multiple assets at once"""
+    try:
+        deleted_count = 0
+        errors = []
+        
+        for asset_id in asset_ids:
+            try:
+                # Get asset info
+                asset = await db.fetchrow("""
+                    SELECT storage_path, filename
+                    FROM assets
+                    WHERE id = $1
+                """, asset_id)
+                
+                if not asset:
+                    errors.append({"asset_id": asset_id, "error": "Asset not found"})
+                    continue
+                
+                # Delete from database in correct order (features first due to FK constraint)
+                await db.execute("DELETE FROM features WHERE asset_id = $1", asset_id)
+                await db.execute("DELETE FROM segments WHERE asset_id = $1", asset_id)
+                await db.execute("DELETE FROM assets WHERE id = $1", asset_id)
+                await db.execute("DELETE FROM entities WHERE id = $1", asset_id)  # CASCADE to embeddings
+                
+                # Delete file from disk
+                storage_path = asset['storage_path']
+                if os.path.exists(storage_path):
+                    os.remove(storage_path)
+                
+                # Delete from Redis
+                await redis.delete(f"asset:{asset_id}")
+                
+                deleted_count += 1
+                logger.info(f"Deleted asset {asset_id}")
+                
+            except Exception as e:
+                errors.append({"asset_id": asset_id, "error": str(e)})
+                logger.error(f"Failed to delete asset {asset_id}", error=str(e))
+        
+        return {
+            "success": True,
+            "deleted_count": deleted_count,
+            "total_requested": len(asset_ids),
+            "errors": errors if errors else None
+        }
+        
+    except Exception as e:
+        logger.error("Bulk delete failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "main_simple:app",
+        app,  # Direct app object, not string
         host="0.0.0.0",
         port=2013,
-        reload=True
+        reload=False  # Disable reload to avoid caching issues
     )

@@ -62,10 +62,11 @@ CREATE TABLE segments (
     CONSTRAINT valid_duration CHECK (duration IS NULL OR duration > 0)
 );
 
--- Features extracted from segments
+-- Features extracted from segments or directly from assets
 CREATE TABLE features (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    segment_id UUID NOT NULL REFERENCES segments(id),
+    asset_id UUID NOT NULL REFERENCES assets(id),
+    segment_id UUID REFERENCES segments(id), -- Optional: NULL for asset-level features
     feature_domain VARCHAR(50) NOT NULL, -- 'visual', 'semantic', 'style', 'technical', 'audio'
     feature_type VARCHAR(100) NOT NULL, -- 'object_detection', 'sentiment', etc.
     feature_data JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -74,7 +75,11 @@ CREATE TABLE features (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     
     CONSTRAINT valid_feature_domain CHECK (feature_domain IN ('visual', 'semantic', 'style', 'technical', 'audio', 'text')),
-    CONSTRAINT valid_feature_confidence CHECK (confidence BETWEEN 0.0 AND 1.0)
+    CONSTRAINT valid_feature_confidence CHECK (confidence BETWEEN 0.0 AND 1.0),
+    CONSTRAINT feature_must_belong_to_asset_or_segment CHECK (
+        (asset_id IS NOT NULL AND segment_id IS NULL) OR 
+        (asset_id IS NOT NULL AND segment_id IS NOT NULL)
+    )
 );
 
 -- Embeddings for vector search
@@ -170,6 +175,7 @@ CREATE INDEX idx_segments_sequence ON segments(sequence_number);
 CREATE INDEX idx_segments_confidence ON segments(confidence_score DESC);
 
 -- Feature indexes
+CREATE INDEX idx_features_asset ON features(asset_id);
 CREATE INDEX idx_features_segment ON features(segment_id);
 CREATE INDEX idx_features_domain_type ON features(feature_domain, feature_type);
 CREATE INDEX idx_features_confidence ON features(confidence DESC);
@@ -231,6 +237,21 @@ FROM segments s
 JOIN assets a ON s.asset_id = a.id
 LEFT JOIN features f ON s.id = f.segment_id
 GROUP BY s.id, a.filename, a.mime_type;
+
+-- Asset features view (for direct asset features without segments)
+CREATE VIEW asset_features AS
+SELECT 
+    a.*,
+    e.created_at,
+    e.updated_at,
+    COUNT(f.id) as feature_count,
+    AVG(f.confidence) as avg_feature_confidence,
+    ARRAY_AGG(DISTINCT f.feature_domain) as feature_domains,
+    ARRAY_AGG(DISTINCT f.feature_type) as feature_types
+FROM assets a
+JOIN entities e ON a.id = e.id
+LEFT JOIN features f ON a.id = f.asset_id AND f.segment_id IS NULL
+GROUP BY a.id, e.created_at, e.updated_at, a.filename, a.file_hash, a.file_size, a.mime_type, a.storage_path, a.upload_context, a.processing_status, a.processing_priority, a.confidence_score, a.thumbnail_path, a.proxy_path;
 
 -- Collection statistics
 CREATE VIEW collection_stats AS

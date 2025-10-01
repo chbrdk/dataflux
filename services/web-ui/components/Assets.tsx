@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   FolderOpen,
   Grid,
@@ -18,8 +18,10 @@ import {
   Clock,
   Calendar,
   RefreshCw,
-  Brain
+  Brain,
+  AlertTriangle
 } from 'lucide-react'
+import { toast } from 'react-hot-toast'
 import AnalysisResults from './AnalysisResults'
 
 interface Asset {
@@ -46,11 +48,15 @@ const Assets: React.FC = () => {
     dateRange: ''
   })
   const [selectedAssetForAnalysis, setSelectedAssetForAnalysis] = useState<string | null>(null)
+  const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  
+  const queryClient = useQueryClient()
 
   const { data: assetsData, isLoading, refetch } = useQuery({
     queryKey: ['assets'],
     queryFn: async () => {
-      const response = await fetch('/api/v1/assets')
+      const response = await fetch('http://localhost:2013/api/v1/assets')
       if (!response.ok) {
         throw new Error('Failed to fetch assets')
       }
@@ -61,6 +67,76 @@ const Assets: React.FC = () => {
   })
 
   const assets = assetsData?.assets || []
+  
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (assetId: string) => {
+      const response = await fetch(`http://localhost:2013/api/v1/assets/${assetId}`, {
+        method: 'DELETE'
+      })
+      if (!response.ok) {
+        throw new Error('Failed to delete asset')
+      }
+      return response.json()
+    },
+    onSuccess: (data, assetId) => {
+      toast.success('Asset erfolgreich gelöscht')
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      setShowDeleteConfirm(false)
+      setAssetToDelete(null)
+      // Remove from selected assets if it was selected
+      setSelectedAssets(prev => prev.filter(id => id !== assetId))
+    },
+    onError: (error) => {
+      toast.error('Fehler beim Löschen des Assets')
+      console.error('Delete error:', error)
+    }
+  })
+  
+  // Bulk delete mutation
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (assetIds: string[]) => {
+      const response = await fetch('http://localhost:2013/api/v1/assets/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(assetIds)
+      })
+      if (!response.ok) {
+        throw new Error('Failed to delete assets')
+      }
+      return response.json()
+    },
+    onSuccess: (data) => {
+      toast.success(`${data.deleted_count} Asset(s) erfolgreich gelöscht`)
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      setSelectedAssets([])
+    },
+    onError: (error) => {
+      toast.error('Fehler beim Löschen der Assets')
+      console.error('Bulk delete error:', error)
+    }
+  })
+  
+  const handleDeleteClick = (asset: Asset) => {
+    setAssetToDelete(asset)
+    setShowDeleteConfirm(true)
+  }
+  
+  const handleConfirmDelete = () => {
+    if (assetToDelete) {
+      deleteMutation.mutate(assetToDelete.id)
+    }
+  }
+  
+  const handleBulkDelete = () => {
+    if (selectedAssets.length > 0) {
+      if (confirm(`Möchten Sie wirklich ${selectedAssets.length} Asset(s) löschen?`)) {
+        bulkDeleteMutation.mutate(selectedAssets)
+      }
+    }
+  }
 
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith('video/')) return Video
@@ -213,11 +289,13 @@ const Assets: React.FC = () => {
                 <span className="text-sm text-gray-600">
                   {selectedAssets.length} selected
                 </span>
-                <button className="px-3 py-1 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700">
-                  Download
-                </button>
-                <button className="px-3 py-1 bg-red-600 text-white text-sm rounded-md hover:bg-red-700">
-                  Delete
+                <button 
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleteMutation.isPending}
+                  className="px-3 py-1 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>{bulkDeleteMutation.isPending ? 'Löschen...' : 'Löschen'}</span>
                 </button>
               </div>
             )}
@@ -304,8 +382,12 @@ const Assets: React.FC = () => {
                       <button className="p-1 text-gray-400 hover:text-gray-600">
                         <Download className="w-4 h-4" />
                       </button>
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <Star className="w-4 h-4" />
+                      <button 
+                        onClick={() => handleDeleteClick(asset)}
+                        className="p-1 text-red-400 hover:text-red-600"
+                        title="Asset löschen"
+                      >
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -366,14 +448,25 @@ const Assets: React.FC = () => {
                       <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(asset.processing_status)}`}>
                         {asset.processing_status}
                       </span>
+                      <button 
+                        onClick={() => handleShowAnalysis(asset.id)}
+                        className="p-2 text-purple-400 hover:text-purple-600"
+                        title="Analyse-Ergebnisse"
+                      >
+                        <Brain className="w-4 h-4" />
+                      </button>
                       <button className="p-2 text-gray-400 hover:text-gray-600">
                         <Eye className="w-4 h-4" />
                       </button>
                       <button className="p-2 text-gray-400 hover:text-gray-600">
                         <Download className="w-4 h-4" />
                       </button>
-                      <button className="p-2 text-gray-400 hover:text-gray-600">
-                        <MoreVertical className="w-4 h-4" />
+                      <button 
+                        onClick={() => handleDeleteClick(asset)}
+                        className="p-2 text-red-400 hover:text-red-600"
+                        title="Löschen"
+                      >
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -399,6 +492,61 @@ const Assets: React.FC = () => {
           assetId={selectedAssetForAnalysis}
           onClose={() => setSelectedAssetForAnalysis(null)}
         />
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && assetToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Asset löschen?
+                </h3>
+              </div>
+            </div>
+            
+            <p className="text-gray-600 mb-2">
+              Möchten Sie das Asset <strong>{assetToDelete.filename}</strong> wirklich löschen?
+            </p>
+            <p className="text-sm text-gray-500 mb-6">
+              Diese Aktion kann nicht rückgängig gemacht werden. Das Asset und alle zugehörigen Analyse-Daten werden permanent gelöscht.
+            </p>
+            
+            <div className="flex items-center justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false)
+                  setAssetToDelete(null)
+                }}
+                disabled={deleteMutation.isPending}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleteMutation.isPending}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 flex items-center space-x-2"
+              >
+                {deleteMutation.isPending ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Löschen...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Löschen</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
