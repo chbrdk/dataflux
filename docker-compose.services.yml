@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  dataflux-ingestion:
+    build: ./services/ingestion-service
+    container_name: dataflux-ingestion
+    ports:
+      - "2013:2013"
+    volumes:
+      - /tmp/dataflux_storage:/tmp/dataflux_storage
+    environment:
+      - DATABASE_URL=postgresql://dataflux_user:secure_password_here@dataflux-postgres:5432/dataflux
+      - REDIS_URL=redis://dataflux-redis:6379
+    depends_on:
+      - dataflux-postgres
+      - dataflux-redis
+    networks:
+      - dataflux-network
+    restart: unless-stopped
+
+  dataflux-analysis:
+    build: ./services/analysis-service
+    container_name: dataflux-analysis
+    ports:
+      - "2014:2014"
+    environment:
+      - DATABASE_URL=postgresql://dataflux_user:secure_password_here@dataflux-postgres:5432/dataflux
+      - REDIS_URL=redis://dataflux-redis:6379
+      - INGESTION_SERVICE_URL=http://dataflux-ingestion:2013
+    depends_on:
+      - dataflux-postgres
+      - dataflux-redis
+      - dataflux-ingestion
+    networks:
+      - dataflux-network
+    restart: unless-stopped
+
+  dataflux-web-ui:
+    build: ./services/web-ui
+    container_name: dataflux-web-ui
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - dataflux-ingestion
+    networks:
+      - dataflux-network
+    restart: unless-stopped
+
+networks:
+  dataflux-network:
+    external: true

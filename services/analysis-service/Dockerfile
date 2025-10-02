@@ -1,40 +1,26 @@
-FROM python:3.11-slim
+FROM python:3.9-slim
 
-# Set working directory
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    curl \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgcc-s1 \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
+# Copy application code
 COPY src/ ./src/
-COPY analyzers/ ./analyzers/
-
-# Create non-root user
-RUN useradd -m -u 1000 dataflux && chown -R dataflux:dataflux /app
-USER dataflux
 
 # Expose port
-EXPOSE 8003
+EXPOSE 2014
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8003/health || exit 1
+# Set environment variables
+ENV DATABASE_URL=postgresql://dataflux_user:secure_password_here@dataflux-postgres:5432/dataflux
+ENV REDIS_URL=redis://dataflux-redis:6379
+ENV INGESTION_SERVICE_URL=http://dataflux-ingestion:2013
 
 # Run the application
-CMD ["python", "-m", "src.main"]
+CMD ["python", "-B", "src/api_processor.py"]

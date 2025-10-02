@@ -1,33 +1,28 @@
-FROM python:3.11-slim
+FROM python:3.9-slim
 
-# Set working directory
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    curl \
-    libmagic1 \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
+# Copy application code
 COPY src/ ./src/
 
-# Create non-root user
-RUN useradd -m -u 1000 dataflux && chown -R dataflux:dataflux /app
-USER dataflux
+# Create storage directory
+RUN mkdir -p /tmp/dataflux_storage
 
 # Expose port
-EXPOSE 8001
+EXPOSE 2013
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8001/health || exit 1
+# Set environment variables
+ENV DATABASE_URL=postgresql://dataflux_user:secure_password_here@dataflux-postgres:5432/dataflux
+ENV REDIS_URL=redis://dataflux-redis:6379
 
 # Run the application
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["python", "-B", "src/main_simple.py"]

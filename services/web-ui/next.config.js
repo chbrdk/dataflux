@@ -21,6 +21,21 @@ const nextConfig = {
   images: {
     domains: ['localhost', 'dataflux.local'],
   },
+  
+  // Webpack-Konfiguration für besseres Logging
+  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
+    // Logging für jeden Build-Schritt
+    console.log(`🔧 Webpack Build - BuildId: ${buildId}, Dev: ${dev}, IsServer: ${isServer}`);
+    
+    // Plugin für Build-Progress
+    config.plugins.push(
+      new webpack.ProgressPlugin((percentage, message, ...args) => {
+        console.log(`📊 Build Progress: ${Math.round(percentage * 100)}% - ${message}`, ...args);
+      })
+    );
+    
+    return config;
+  },
 }
 
 module.exports = nextConfig
