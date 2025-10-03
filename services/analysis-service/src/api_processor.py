@@ -16,8 +16,8 @@ from pathlib import Path
 
 # Import analyzers
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from analyzers.image_analyzer import ImageAnalyzer
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'analyzers'))
+from image_analyzer import ImageAnalyzer
 
 # Logging setup
 logging.basicConfig(

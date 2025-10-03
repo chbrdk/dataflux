@@ -54,7 +54,13 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 from sklearn.cluster import KMeans
-from .base import BaseAnalyzer
+try:
+    from .base import BaseAnalyzer
+except ImportError:
+    # Fallback for direct import
+    class BaseAnalyzer:
+        def __init__(self):
+            pass
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +107,20 @@ class ImageAnalyzer(BaseAnalyzer):
         """Comprehensive image analysis with multiple AI models"""
         try:
             logger.info(f">>> ImageAnalyzer.analyze() called for {file_path}")
-            self.log_analysis_start(file_path, asset_data)
+            logger.info(f"Starting ImageAnalyzer analysis for {file_path}")
             
-            if not self.validate_file(file_path):
-                logger.error(f"File validation failed for {file_path}")
-                return self.create_error_result("Invalid file")
+            if not os.path.exists(file_path):
+                logger.error(f"File not found: {file_path}")
+                return {
+                    'segments': [],
+                    'features': [],
+                    'embeddings': [],
+                    'metadata': {
+                        'error': 'File not found',
+                        'analysis_version': '0.1-test',
+                        'analyzer': 'simple_test'
+                    }
+                }
             
             logger.info(f"File validation passed, loading image...")
             
@@ -352,7 +367,7 @@ class ImageAnalyzer(BaseAnalyzer):
                     # Always add YOLO feature, even if no objects detected
                     features.append({
                         'type': 'object_detection',
-                        'domain': 'content',
+                        'domain': 'visual',
                         'confidence': 0.8,
                         'data': {
                             'objects': detected_objects,
@@ -371,7 +386,7 @@ class ImageAnalyzer(BaseAnalyzer):
                     logger.warning("⚠️ YOLO not available, adding placeholder feature")
                     features.append({
                         'type': 'object_detection',
-                        'domain': 'content',
+                        'domain': 'visual',
                         'confidence': 0.0,
                         'data': {
                             'objects': [],
@@ -389,7 +404,7 @@ class ImageAnalyzer(BaseAnalyzer):
                 # Add error feature
                 features.append({
                     'type': 'object_detection',
-                    'domain': 'content',
+                    'domain': 'visual',
                     'confidence': 0.0,
                     'data': {
                         'objects': [],
@@ -448,7 +463,7 @@ class ImageAnalyzer(BaseAnalyzer):
                     
                     features.append({
                         'type': 'face_analysis',
-                        'domain': 'content',
+                        'domain': 'visual',
                         'confidence': 0.8,
                         'data': {
                             'faces': faces,
@@ -464,7 +479,7 @@ class ImageAnalyzer(BaseAnalyzer):
                     logger.warning("⚠️ DeepFace not available, adding placeholder feature")
                     features.append({
                         'type': 'face_analysis',
-                        'domain': 'content',
+                        'domain': 'visual',
                         'confidence': 0.0,
                         'data': {
                             'faces': [],
@@ -482,7 +497,7 @@ class ImageAnalyzer(BaseAnalyzer):
                 # Add error feature
                 features.append({
                     'type': 'face_analysis',
-                    'domain': 'content',
+                    'domain': 'visual',
                     'confidence': 0.0,
                     'data': {
                         'faces': [],
@@ -518,22 +533,31 @@ class ImageAnalyzer(BaseAnalyzer):
             logger.info(f"✅ Generated {len(features)} features")
             
             # Create result
-            result = self.create_success_result(
-                segments=[],
-                features=features,
-                embeddings=[],
-                metadata={
+            result = {
+                'segments': [],
+                'features': features,
+                'embeddings': [],
+                'metadata': {
                     'analysis_version': '0.1-test',
                     'analyzer': 'simple_test'
                 }
-            )
+            }
             
-            self.log_analysis_end(file_path, result)
+            logger.info(f"Completed ImageAnalyzer analysis for {file_path}: {len(result.get('segments', []))} segments, {len(result.get('features', []))} features, {len(result.get('embeddings', []))} embeddings")
             return result
             
         except Exception as e:
-            logger.error(f"Image analysis failed", error=str(e))
-            return self.create_error_result(str(e))
+            logger.error(f"Image analysis failed: {str(e)}")
+            return {
+                'segments': [],
+                'features': [],
+                'embeddings': [],
+                'metadata': {
+                    'error': str(e),
+                    'analysis_version': '0.1-test',
+                    'analyzer': 'simple_test'
+                }
+            }
     
     async def _initialize_models(self):
         """Initialize AI models asynchronously"""
@@ -554,7 +578,7 @@ class ImageAnalyzer(BaseAnalyzer):
                 logger.info("EasyOCR reader initialized")
                 
         except Exception as e:
-            logger.error(f"Model initialization failed", error=str(e))
+            logger.error(f"Model initialization failed: {str(e)}")
     
     async def _load_image(self, file_path: str) -> Optional[np.ndarray]:
         """Load image as numpy array"""
@@ -564,7 +588,7 @@ class ImageAnalyzer(BaseAnalyzer):
                 return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             return None
         except Exception as e:
-            logger.error(f"Failed to load image", error=str(e))
+            logger.error(f"Failed to load image: {str(e)}")
             return None
     
     def _get_models_used(self) -> List[str]:
@@ -620,7 +644,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"Technical properties analysis failed", error=str(e))
+            logger.error(f"Technical properties analysis failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _extract_exif_metadata(self, file_path: str) -> Dict[str, Any]:
@@ -1156,7 +1180,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"YOLO object detection failed", error=str(e))
+            logger.error(f"YOLO object detection failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _analyze_faces_deepface(self, file_path: str, image: np.ndarray) -> Dict[str, Any]:
@@ -1205,7 +1229,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"DeepFace analysis failed", error=str(e))
+            logger.error(f"DeepFace analysis failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _extract_color_analysis(self, file_path: str, image: np.ndarray) -> Dict[str, Any]:
@@ -1273,7 +1297,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"Color analysis failed", error=str(e))
+            logger.error(f"Color analysis failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _analyze_scene_composition(self, file_path: str, image: np.ndarray) -> Dict[str, Any]:
@@ -1330,7 +1354,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"Scene composition analysis failed", error=str(e))
+            logger.error(f"Scene composition analysis failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _detect_text_ocr(self, file_path: str, image: np.ndarray) -> Dict[str, Any]:
@@ -1391,7 +1415,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"OCR text detection failed", error=str(e))
+            logger.error(f"OCR text detection failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _generate_semantic_description(self, file_path: str, image: np.ndarray) -> Dict[str, Any]:
@@ -1461,7 +1485,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"Semantic description generation failed", error=str(e))
+            logger.error(f"Semantic description generation failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _generate_embeddings(self, file_path: str, image: np.ndarray) -> Dict[str, Any]:
@@ -1500,7 +1524,7 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"Embedding generation failed", error=str(e))
+            logger.error(f"Embedding generation failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
     
     async def _perform_safety_checks(self, file_path: str, image: np.ndarray) -> Dict[str, Any]:
@@ -1548,5 +1572,5 @@ class ImageAnalyzer(BaseAnalyzer):
             }
             
         except Exception as e:
-            logger.error(f"Safety checks failed", error=str(e))
+            logger.error(f"Safety checks failed: {str(e)}")
             return {'segments': [], 'features': [], 'embeddings': []}
