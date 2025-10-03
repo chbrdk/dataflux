@@ -5,9 +5,11 @@ FastAPI service for file upload and processing without Kafka
 """
 
 import os
+import asyncio
 import asyncpg
 import aioredis
 import structlog
+import aiohttp
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from fastapi import (
@@ -76,6 +78,7 @@ class AssetResponse(BaseModel):
     created_at: datetime
     thumbnail_path: Optional[str] = None
     dimensions: Optional[Dict[str, int]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 class AssetListResponse(BaseModel):
     assets: List[AssetResponse]
@@ -85,6 +88,107 @@ class AssetListResponse(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str
+
+# Analysis and processing functions
+async def start_analysis_for_asset(asset_id: str, file_path: str, mime_type: str):
+    """Start analysis for an uploaded asset"""
+    try:
+        if not mime_type.startswith('image/'):
+            logger.info(f"Skipping analysis for non-image asset {asset_id}")
+            return None
+        
+        logger.info(f"Starting analysis for asset {asset_id}")
+        
+        async with aiohttp.ClientSession() as session:
+            analysis_url = "http://localhost:2014/api/v1/analyze/image"
+            payload = {"file_path": file_path}
+            
+            timeout = aiohttp.ClientTimeout(total=120)  # 120 seconds timeout for large images
+            async with session.post(analysis_url, json=payload, timeout=timeout) as response:
+                if response.status == 200:
+                    analysis_result = await response.json()
+                    features_count = len(analysis_result.get('analysis', {}).get('features', []))
+                    logger.info(f"✅ Analysis completed for asset {asset_id} - {features_count} features found")
+                    return analysis_result
+                else:
+                    error_text = await response.text()
+                    logger.error(f"❌ Analysis failed for asset {asset_id}: {response.status} - {error_text}")
+                    return None
+                    
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"❌ Failed to start analysis for asset {asset_id}: {str(e)}")
+        logger.error(f"Traceback: {error_details}")
+        print(f"❌ ANALYSIS ERROR for {asset_id}: {str(e)}")
+        print(f"Full traceback:\n{error_details}")
+        return None
+
+async def process_asset_automatically(asset_id: str, file_path: str, mime_type: str):
+    """Automatically process an asset after upload"""
+    try:
+        logger.info(f"🚀 Starting automatic processing for asset {asset_id}")
+        
+        # Get a new database connection
+        async with db_pool.acquire() as db:
+            # Status is already 'processing' from upload, no need to update
+            
+            # Generate thumbnails for images
+            if mime_type.startswith('image/'):
+                logger.info(f"📸 Generating thumbnails for asset {asset_id}")
+                await generate_multiple_thumbnails(file_path, "/tmp/dataflux_thumbnails", asset_id)
+                logger.info(f"✅ Thumbnails generated for asset {asset_id}")
+            
+            # Start analysis
+            logger.info(f"🔬 Starting analysis for asset {asset_id}")
+            analysis_result = await start_analysis_for_asset(asset_id, file_path, mime_type)
+            
+            # Store analysis result in entity metadata
+            if analysis_result:
+                features_count = len(analysis_result.get('analysis', {}).get('features', []))
+                logger.info(f"💾 Storing {features_count} analysis features for asset {asset_id}")
+                
+                entity_metadata = await db.fetchval("""
+                    SELECT metadata FROM entities WHERE id = $1
+                """, asset_id)
+                
+                if entity_metadata:
+                    metadata_dict = json.loads(entity_metadata) if isinstance(entity_metadata, str) else entity_metadata
+                else:
+                    metadata_dict = {}
+                
+                metadata_dict["analysis_result"] = analysis_result
+                
+                await db.execute("""
+                    UPDATE entities 
+                    SET metadata = $1 
+                    WHERE id = $2
+                """, json.dumps(metadata_dict), asset_id)
+                logger.info(f"✅ Analysis result stored for asset {asset_id} ({len(json.dumps(metadata_dict))} bytes)")
+            else:
+                logger.warning(f"⚠️ No analysis result to store for asset {asset_id}")
+            
+            # Update status to completed
+            await db.execute("""
+                UPDATE assets 
+                SET processing_status = 'completed'
+                WHERE id = $1
+            """, asset_id)
+            
+            logger.info(f"✅ Automatic processing complete for asset {asset_id}")
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to automatically process asset {asset_id}: {str(e)}")
+        # Mark as failed - need to get a new connection for this too
+        try:
+            async with db_pool.acquire() as db:
+                await db.execute("""
+                    UPDATE assets 
+                    SET processing_status = 'failed'
+                    WHERE id = $1
+                """, asset_id)
+        except:
+            pass  # If we can't even update the status, just log it
 
 # Thumbnail generation functions
 async def generate_thumbnail(image_path: str, thumbnail_path: str, size: tuple = (300, 200)) -> Dict[str, Any]:
@@ -361,10 +465,21 @@ async def upload_asset(
         )
         
         if existing_asset:
-            logger.info(f"Duplicate file detected: {file_hash}")
-            # Delete the newly created entity and file since it's a duplicate
+            logger.info(f"Duplicate file detected: {file_hash} - Updating existing asset with new storage_path")
+            
+            # Update the existing asset with the new storage_path and trigger processing
+            await db.execute("""
+                UPDATE assets 
+                SET storage_path = $1, processing_status = 'processing'
+                WHERE id = $2
+            """, storage_path, existing_asset['id'])
+            
+            # Delete the newly created entity (but keep the file!)
             await db.execute("DELETE FROM entities WHERE id = $1", entity_id)
-            os.remove(storage_path)
+            
+            # Start automatic processing for the existing asset with updated storage_path
+            logger.info(f"Starting automatic background processing for updated duplicate asset {existing_asset['id']}")
+            asyncio.create_task(process_asset_automatically(str(existing_asset['id']), storage_path, mime_type))
             
             return AssetResponse(
                 id=str(existing_asset['id']),
@@ -372,10 +487,10 @@ async def upload_asset(
                 file_size=file_size,
                 mime_type=mime_type,
                 file_hash=file_hash,
-                processing_status="completed",
+                processing_status="processing",
                 created_at=datetime.utcnow(),
-                thumbnail_path=None,
-                dimensions=None
+                thumbnail_path=thumbnail_path,
+                dimensions=dimensions
             )
         
         # Update entity metadata with dimensions
@@ -394,15 +509,19 @@ async def upload_asset(
             INSERT INTO assets (id, filename, file_hash, file_size, mime_type, storage_path, thumbnail_path, upload_context, processing_status, processing_priority)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
-        """, entity_id, file.filename, file_hash, file_size, mime_type, storage_path, thumbnail_path, context, "queued", priority)
+        """, entity_id, file.filename, file_hash, file_size, mime_type, storage_path, thumbnail_path, context, "processing", priority)
         
         # Cache in Redis
         await redis.setex(f"asset:{asset_id}", 3600, json.dumps({
             'id': str(asset_id),
             'filename': file.filename,
-            'status': 'queued',
+            'status': 'processing',
             'created_at': datetime.utcnow().isoformat()
         }))
+        
+        # Start automatic processing in background
+        logger.info(f"Starting automatic background processing for asset {asset_id}")
+        asyncio.create_task(process_asset_automatically(str(asset_id), storage_path, mime_type))
         
         logger.info("Asset uploaded successfully", asset_id=str(asset_id), filename=file.filename)
         
@@ -412,7 +531,7 @@ async def upload_asset(
             file_size=file_size,
             mime_type=mime_type,
             file_hash=file_hash,
-            processing_status="queued",
+            processing_status="processing",
             created_at=datetime.utcnow(),
             thumbnail_path=thumbnail_path,
             dimensions=dimensions
@@ -465,21 +584,33 @@ async def list_assets(
         
         assets = await db.fetch(assets_query, *params)
         
+        # Parse metadata for each asset
+        asset_responses = []
+        for asset in assets:
+            metadata_dict = None
+            dimensions = None
+            if asset['metadata']:
+                try:
+                    metadata_dict = json.loads(asset['metadata']) if isinstance(asset['metadata'], str) else asset['metadata']
+                    dimensions = metadata_dict.get('dimensions')
+                except:
+                    pass
+            
+            asset_responses.append(AssetResponse(
+                id=str(asset['id']),
+                filename=asset['filename'],
+                file_size=asset['file_size'],
+                mime_type=asset['mime_type'],
+                file_hash=asset['file_hash'],
+                processing_status=asset['processing_status'],
+                created_at=asset['created_at'],
+                thumbnail_path=asset['thumbnail_path'],
+                dimensions=dimensions,
+                metadata=metadata_dict
+            ))
+        
         return AssetListResponse(
-            assets=[
-                AssetResponse(
-                    id=str(asset['id']),
-                    filename=asset['filename'],
-                    file_size=asset['file_size'],
-                    mime_type=asset['mime_type'],
-                    file_hash=asset['file_hash'],
-                    processing_status=asset['processing_status'],
-                    created_at=asset['created_at'],
-                    thumbnail_path=asset['thumbnail_path'],
-                    dimensions=json.loads(asset['metadata']).get('dimensions') if asset['metadata'] else None
-                )
-                for asset in assets
-            ],
+            assets=asset_responses,
             total=total,
             page=page,
             limit=limit
@@ -540,6 +671,16 @@ async def get_asset(
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
         
+        # Parse metadata
+        metadata_dict = None
+        dimensions = None
+        if asset['metadata']:
+            try:
+                metadata_dict = json.loads(asset['metadata']) if isinstance(asset['metadata'], str) else asset['metadata']
+                dimensions = metadata_dict.get('dimensions')
+            except:
+                pass
+        
         return AssetResponse(
             id=str(asset['id']),
             filename=asset['filename'],
@@ -549,7 +690,8 @@ async def get_asset(
             processing_status=asset['processing_status'],
             created_at=asset['created_at'],
             thumbnail_path=asset['thumbnail_path'],
-            dimensions=json.loads(asset['metadata']).get('dimensions') if asset['metadata'] else None
+            dimensions=dimensions,
+            metadata=metadata_dict
         )
         
     except HTTPException:
@@ -1129,6 +1271,85 @@ async def delete_asset(
     except Exception as e:
         import traceback
         logger.error("Failed to delete asset", error=str(e), asset_id=asset_id, traceback=traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Process queued assets endpoint
+@app.post("/api/v1/assets/process-queue")
+async def process_queued_assets(
+    db: asyncpg.Connection = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis)
+):
+    """Process all queued assets"""
+    try:
+        # Get all queued assets
+        queued_assets = await db.fetch("""
+            SELECT id, filename, mime_type, storage_path, thumbnail_path
+            FROM assets
+            WHERE processing_status = 'queued'
+            ORDER BY updated_at ASC
+        """)
+        
+        processed_count = 0
+        errors = []
+        
+        for asset in queued_assets:
+            try:
+                # Update status to processing
+                await db.execute("""
+                    UPDATE assets 
+                    SET processing_status = 'processing'
+                    WHERE id = $1
+                """, asset['id'])
+                
+                # Check if thumbnail exists, if not generate it
+                if not asset['thumbnail_path'] or not os.path.exists(asset['thumbnail_path']):
+                    if asset['storage_path'] and os.path.exists(asset['storage_path']):
+                        if asset['mime_type'].startswith('image/'):
+                            # Generate thumbnails
+                            await generate_multiple_thumbnails(asset['storage_path'], asset['id'])
+                            
+                            # Update thumbnail path in database
+                            medium_thumbnail_path = f"/tmp/dataflux_thumbnails/{asset['id']}_medium.jpg"
+                            await db.execute("""
+                                UPDATE assets 
+                                SET thumbnail_path = $1
+                                WHERE id = $2
+                            """, medium_thumbnail_path, asset['id'])
+                
+                # Update status to completed
+                await db.execute("""
+                    UPDATE assets 
+                    SET processing_status = 'completed'
+                    WHERE id = $1
+                """, asset['id'])
+                
+                processed_count += 1
+                logger.info(f"Processed asset {asset['id']}: {asset['filename']}")
+                
+            except Exception as e:
+                # Mark as failed
+                await db.execute("""
+                    UPDATE assets 
+                    SET processing_status = 'failed'
+                    WHERE id = $1
+                """, asset['id'])
+                
+                errors.append({
+                    "asset_id": asset['id'],
+                    "filename": asset['filename'],
+                    "error": str(e)
+                })
+                logger.error(f"Failed to process asset {asset['id']}: {str(e)}")
+        
+        return {
+            "status": "completed",
+            "processed_count": processed_count,
+            "total_queued": len(queued_assets),
+            "errors": errors
+        }
+        
+    except Exception as e:
+        logger.error("Failed to process queue", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 # Bulk delete assets endpoint

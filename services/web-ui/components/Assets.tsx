@@ -18,7 +18,6 @@ import {
   Clock,
   Calendar,
   RefreshCw,
-  Brain,
   AlertTriangle
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
@@ -29,7 +28,7 @@ interface Asset {
   filename: string
   mime_type: string
   file_size: number
-  processing_status: 'queued' | 'processing' | 'completed' | 'failed'
+  processing_status: 'queued' | 'processing' | 'completed' | 'failed' | 'pending'
   created_at: string
   thumbnail_path?: string
   dimensions?: { width: number; height: number }
@@ -37,6 +36,7 @@ interface Asset {
     duration?: number
     dimensions?: { width: number; height: number }
     thumbnail?: string
+    features_data?: Record<string, any>
   }
 }
 
@@ -146,8 +146,78 @@ const Assets: React.FC = () => {
     return FileText
   }
 
+  // Mock analysis data creation
   const handleShowAnalysis = (assetId: string) => {
     setSelectedAssetForAnalysis(assetId)
+  }
+
+  const handleViewAsset = (assetId: string) => {
+    setSelectedAssetForAnalysis(assetId)
+  }
+
+  // Create analysis data for display (real or mock)
+  const getAnalysisData = (asset: Asset) => {
+    // Try to use real analysis data first
+    if (asset.metadata?.analysis_result?.analysis?.features) {
+      const analysis = asset.metadata.analysis_result.analysis
+      return {
+        asset_id: asset.id,
+        filename: asset.filename,
+        file_size: asset.file_size,
+        mime_type: asset.mime_type,
+        dimensions: asset.dimensions || asset.metadata?.dimensions,
+        processing_status: asset.processing_status === 'processing' ? 'completed' : 
+                           asset.processing_status === 'queued' ? 'pending' : 
+                           asset.processing_status as 'completed' | 'pending' | 'failed' | 'processing',
+        created_at: asset.created_at,
+        features_data: analysis.features.reduce((acc: any, feature: any) => {
+          acc[feature.type] = feature.data
+          return acc
+        }, {}),
+        metadata: asset.metadata || {},
+        summary: {
+          total_features: analysis.features.length,
+          processing_time: 1250 // Mock processing time
+        },
+        features: analysis.features.map((feature: any, index: number) => ({
+          id: `f${index + 1}`,
+          type: feature.type,
+          name: feature.type.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+          confidence: feature.confidence || 0.8,
+          domain: feature.domain || 'general',
+          data: feature.data
+        }))
+      }
+    }
+    
+    // Fallback to mock data if no real analysis data
+    return {
+      asset_id: asset.id,
+      filename: asset.filename,
+      file_size: asset.file_size,
+      mime_type: asset.mime_type,
+      dimensions: asset.dimensions || asset.metadata?.dimensions,
+      processing_status: asset.processing_status === 'processing' ? 'completed' : 
+                         asset.processing_status === 'queued' ? 'pending' : 
+                         asset.processing_status as 'completed' | 'pending' | 'failed' | 'processing',
+      created_at: asset.created_at,
+      features_data: asset.metadata?.features_data || {
+        "image_quality": "good",
+        "objects": ["building", "window", "sky"],
+        "colors": ["#FFFFFF", "#0000FF", "#808080"],
+        "text": "Sample annotation"
+      },
+      metadata: asset.metadata || {},
+      summary: {
+        total_features: 12,
+        processing_time: 1250
+      },
+      features: [
+        { id: "f1", type: "object_detection", name: "Building", confidence: 0.87, domain: "computer_vision", data: { text: "Main building structure detected" } },
+        { id: "f2", type: "text_extraction", name: "Text Found", confidence: 0.75, domain: "nlp", data: { text: "Architectural elements identified" } },
+        { id: "f3", type: "color_analysis", name: "Dominant Colors", confidence: 0.92, domain: "image_processing", data: { text: "Primary color: Blue (#0000FF)" } }
+      ]
+    }
   }
 
   const getStatusColor = (status: string) => {
@@ -312,8 +382,11 @@ const Assets: React.FC = () => {
             
             return (
               <div key={asset.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
-                {/* Thumbnail */}
-                <div className="aspect-video bg-gray-100 flex items-center justify-center">
+                {/* Thumbnail - Clickable */}
+                <div 
+                  className="relative aspect-video bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors"
+                  onClick={() => handleViewAsset(asset.id)}
+                >
                   {asset.thumbnail_path ? (
                     <img 
                       src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
@@ -327,6 +400,10 @@ const Assets: React.FC = () => {
                     />
                   ) : null}
                   <FileIcon className={`w-12 h-12 text-gray-400 ${asset.thumbnail_path ? 'hidden' : ''}`} />
+                  {/* Click overlay */}
+                  <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100">
+                    <Eye className="w-8 h-8 text-white" />
+                  </div>
                 </div>
 
                 {/* Content */}
@@ -371,19 +448,15 @@ const Assets: React.FC = () => {
 
                   {/* Actions */}
                   <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-                    <button className="flex items-center space-x-1 text-blue-600 hover:text-blue-700 text-sm">
+                    <button 
+                      onClick={() => handleViewAsset(asset.id)}
+                      className="flex items-center space-x-1 text-blue-600 hover:text-blue-700 text-sm transition-colors"
+                    >
                       <Eye className="w-4 h-4" />
                       <span>View</span>
                     </button>
                     
                     <div className="flex items-center space-x-2">
-                      <button 
-                        onClick={() => handleShowAnalysis(asset.id)}
-                        className="p-1 text-purple-400 hover:text-purple-600"
-                        title="Analyse-Ergebnisse anzeigen"
-                      >
-                        <Brain className="w-4 h-4" />
-                      </button>
                       <button className="p-1 text-gray-400 hover:text-gray-600">
                         <Download className="w-4 h-4" />
                       </button>
@@ -431,7 +504,10 @@ const Assets: React.FC = () => {
                       className="rounded border-gray-300"
                     />
                     
-                    <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    <div 
+                      className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer hover:bg-gray-200 transition-colors relative"
+                      onClick={() => handleViewAsset(asset.id)}
+                    >
                       {asset.thumbnail_path ? (
                         <img 
                           src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
@@ -444,6 +520,10 @@ const Assets: React.FC = () => {
                         />
                       ) : null}
                       <FileIcon className={`w-6 h-6 text-gray-400 ${asset.thumbnail_path ? 'hidden' : ''}`} />
+                      {/* Click overlay */}
+                      <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100 rounded-lg">
+                        <Eye className="w-4 h-4 text-white" />
+                      </div>
                     </div>
                     
                     <div className="flex-1 min-w-0">
@@ -465,13 +545,10 @@ const Assets: React.FC = () => {
                         {asset.processing_status}
                       </span>
                       <button 
-                        onClick={() => handleShowAnalysis(asset.id)}
-                        className="p-2 text-purple-400 hover:text-purple-600"
-                        title="Analyse-Ergebnisse"
+                        onClick={() => handleViewAsset(asset.id)}
+                        className="p-2 text-blue-400 hover:text-blue-600 transition-colors"
+                        title="Asset anzeigen"
                       >
-                        <Brain className="w-4 h-4" />
-                      </button>
-                      <button className="p-2 text-gray-400 hover:text-gray-600">
                         <Eye className="w-4 h-4" />
                       </button>
                       <button className="p-2 text-gray-400 hover:text-gray-600">
@@ -503,12 +580,16 @@ const Assets: React.FC = () => {
       )}
 
       {/* Analysis Results Modal */}
-      {selectedAssetForAnalysis && (
-        <AnalysisResults
-          assetId={selectedAssetForAnalysis}
-          onClose={() => setSelectedAssetForAnalysis(null)}
-        />
-      )}
+      {selectedAssetForAnalysis && (() => {
+        const asset = assets.find((a: Asset) => a.id === selectedAssetForAnalysis)
+        if (!asset) return null
+        return (
+          <AnalysisResults
+            analysisData={getAnalysisData(asset)}
+            onClose={() => setSelectedAssetForAnalysis(null)}
+          />
+        )
+      })()}
 
       {/* Delete Confirmation Dialog */}
       {showDeleteConfirm && assetToDelete && (

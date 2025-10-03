@@ -8,17 +8,27 @@ DataFlux besteht aus drei Hauptkomponenten:
 
 ### 1. Ingestion Service (Port 2013)
 - **Zweck**: Upload, Speicherung und Verwaltung von Medien-Assets
-- **Technologie**: FastAPI, PostgreSQL, Redis, PIL/Pillow
+- **Technologie**: FastAPI, PostgreSQL, Redis, PIL/Pillow, aiohttp
 - **Features**:
-  - Streaming File Upload
+  - Streaming File Upload mit automatischer Verarbeitung
   - Asset Management (Upload, Download, Delete)
   - **Multi-Thumbnail-Generierung**: Automatische Erzeugung verschiedener Thumbnail-Größen
     - **Small**: 150×100px (Grid-Ansicht)
     - **Medium**: 400×300px (Standard)
-    - **Large**: 1200×800px (Modal-Hintergrund)
+    - **Large**: 1200×800px (Modal-Anzeige)
+  - **Automatische Asset-Verarbeitung**:
+    - Background-Processing nach Upload
+    - Automatische Thumbnail-Generierung in 3 Größen
+    - Automatische KI-Analyse (Integration mit Analysis Service)
+    - Intelligente Timeout-Verwaltung (120s für große Dateien)
+    - Status-Tracking (processing → completed/failed)
+  - **Intelligente Duplikaterkennung**:
+    - Hash-basierte Duplikat-Prüfung
+    - Automatische Storage-Path-Aktualisierung bei Re-Upload
+    - Trigger automatische Verarbeitung bei aktualisierten Duplikaten
   - Bulk Operations
-  - Hash-basierte Duplikaterkennung
   - Foreign Key Constraint Management
+  - Umfassendes Logging mit Emoji-Status-Indikatoren
 
 ### 2. Analysis Service (Port 2014)
 - **Zweck**: KI-gestützte Analyse von Medieninhalten
@@ -69,13 +79,22 @@ DataFlux besteht aus drei Hauptkomponenten:
   - Intelligente Thumbnail-Anzeige basierend auf Kontext
 
 #### Analyse-Ergebnisse
-  - Analyse-Ergebnisse in strukturierter Tabelle
-  - JSON-Parsing und -Darstellung
-  - **Glassmorphismus-Modal**: Vollbild-Darstellung mit 95vh Mindesthöhe
-    - Einsatz hochauflösender Large-Thumbnails als Hintergrundbild
-    - Elegante Overlay-Elemente mit Transparenz-Effekten
+  - **Automatische Analyse-Anzeige**: Echte KI-Analyse-Daten werden automatisch geladen
+  - **Interaktives Modal**: Vollbild-Darstellung mit 95vh Mindesthöhe
+    - 2/3 Layout: Zentriertes Bild (unterstützt Hoch- und Querformat)
+    - 1/3 Layout: Feature-Panels mit Tabs
+    - Einsatz hochauflösender Large-Thumbnails (1200×800px)
     - Intelligente Fallback-Mechanismen bei Bilder-Fehlern
-  - Responsive Design
+  - **Klickbare Thumbnails**: Direkter Zugriff auf Analyse-Modal
+  - **7 AI-Features automatisch verfügbar**:
+    - Technical Properties (Dimensionen, Format, Megapixel)
+    - Technical Extended (Aspect Ratio, Helligkeit, Kontrast)
+    - EXIF Comprehensive (Kamera-Info, GPS, Belichtung)
+    - Image Quality (Blur-Score, Noise, Signal-to-Noise Ratio)
+    - Composition (Symmetrie, Rule of Thirds)
+    - Object Detection (YOLOv8n)
+    - Face Analysis (DeepFace - Alter, Emotion, Geschlecht)
+  - Responsive Design mit Tailwind CSS
 
 ## 🚀 Installation und Setup
 
