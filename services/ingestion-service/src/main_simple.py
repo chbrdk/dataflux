@@ -5,18 +5,20 @@ FastAPI service for file upload and processing without Kafka
 """
 
 import os
-import asyncio
 import asyncpg
 import aioredis
 import structlog
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, BackgroundTasks
+from fastapi import (
+    FastAPI, File, UploadFile, Form, HTTPException, Depends
+)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import hashlib
 import mimetypes
 import json
+from PIL import Image
 
 # Configure structured logging
 structlog.configure(
@@ -72,6 +74,8 @@ class AssetResponse(BaseModel):
     file_hash: str
     processing_status: str
     created_at: datetime
+    thumbnail_path: Optional[str] = None
+    dimensions: Optional[Dict[str, int]] = None
 
 class AssetListResponse(BaseModel):
     assets: List[AssetResponse]
@@ -81,6 +85,125 @@ class AssetListResponse(BaseModel):
 
 class StatusUpdate(BaseModel):
     status: str
+
+# Thumbnail generation functions
+async def generate_thumbnail(image_path: str, thumbnail_path: str, size: tuple = (300, 200)) -> Dict[str, Any]:
+    """Generate thumbnail from image file"""
+    try:
+        with Image.open(image_path) as img:
+            # Convert to RGB if necessary (for PNGs with transparency)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                # Create a white background
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Create thumbnail using Pillow's thumbnail method (maintains aspect ratio)
+            img.thumbnail(size, Image.Resampling.LANCZOS)
+            
+            # Save thumbnail
+            img.save(thumbnail_path, 'JPEG', quality=85, optimize=True)
+            
+            return {
+                'success': True,
+                'thumbnail_path': thumbnail_path,
+                'dimensions': img.size,
+                'generated': True
+            }
+    
+    except Exception as e:
+        logger.error("Failed to generate thumbnail", error=str(e), image_path=image_path)
+        return {
+            'success': False,
+            'error': str(e),
+            'generated': False
+        }
+
+async def generate_multiple_thumbnails(image_path: str, base_directory: str, asset_id: str) -> Dict[str, Any]:
+    """Generate multiple thumbnail sizes for different use cases"""
+    
+    # Define thumbnail sizes for different use cases
+    thumbnail_sizes = {
+        'small': (150, 100),    # Grid view thumbnails
+        'medium': (400, 300),   # List view thumbnails  
+        'large': (1200, 800)    # Modal background images
+    }
+    
+    generated_thumbnails = {}
+    
+    try:
+        os.makedirs(base_directory, exist_ok=True)
+        
+        # Load original image once
+        with Image.open(image_path) as img:
+            # Store original dimensions
+            original_dimensions = {'width': img.width, 'height': img.height}
+            
+            for size_name, size in thumbnail_sizes.items():
+                # Create thumbnail filename
+                thumbnail_filename = f"{asset_id}_{size_name}.jpg"
+                thumbnail_path = os.path.join(base_directory, thumbnail_filename)
+                
+                # Reset image for each thumbnail generation
+                img_copy = img.copy()
+                
+                # Convert to RGB if necessary (for PNGs with transparency)
+                if img_copy.mode in ('RGBA', 'LA', 'P'):
+                    # Create a white background
+                    background = Image.new('RGB', img_copy.size, (255, 255, 255))
+                    if img_copy.mode == 'P':
+                        img_copy = img_copy.convert('RGBA')
+                    background.paste(img_copy, mask=img_copy.split()[-1] if img_copy.mode == 'RGBA' else None)
+                    img_copy = background
+                elif img_copy.mode != 'RGB':
+                    img_copy = img_copy.convert('RGB')
+                
+                # Create thumbnail using Pillow's thumbnail method (maintains aspect ratio)
+                img_copy.thumbnail(size, Image.Resampling.LANCZOS)
+                
+                # Adjust quality based on size - larger thumbnails get higher quality
+                quality = 95 if size_name == 'large' else (85 if size_name == 'medium' else 80)
+                
+                # Save thumbnail
+                img_copy.save(thumbnail_path, 'JPEG', quality=quality, optimize=True)
+                
+                generated_thumbnails[size_name] = {
+                    'path': thumbnail_path,
+                    'filename': thumbnail_filename,
+                    'dimensions': img_copy.size,
+                    'quality': quality
+                }
+        
+        return {
+            'success': True,
+            'thumbnails': generated_thumbnails,
+            'original_dimensions': original_dimensions,
+            'generated': True
+        }
+    
+    except Exception as e:
+        logger.error("Failed to generate multiple thumbnails", error=str(e), image_path=image_path)
+        return {
+            'success': False,
+            'error': str(e),
+            'generated': False
+        }
+
+async def get_image_dimensions(image_path: str) -> Optional[Dict[str, int]]:
+    """Get image dimensions"""
+    try:
+        with Image.open(image_path) as img:
+            return {
+                'width': img.width,
+                'height': img.height
+            }
+    except Exception as e:
+        logger.error("Failed to get image dimensions", error=str(e), image_path=image_path)
+        return None
 
 # Dependency functions
 async def get_db():
@@ -169,7 +292,9 @@ async def upload_asset(
         
         # Save file to local storage and calculate hash while streaming
         storage_dir = "/tmp/dataflux_storage"
+        thumbnail_dir = "/tmp/dataflux_thumbnails"
         os.makedirs(storage_dir, exist_ok=True)
+        os.makedirs(thumbnail_dir, exist_ok=True)
         storage_path = os.path.join(storage_dir, f"{entity_id}_{file.filename}")
         
         # Read entire file content
@@ -196,6 +321,39 @@ async def upload_asset(
         if not mime_type:
             mime_type = "application/octet-stream"
         
+        # Generate multiple thumbnails and get dimensions for images
+        thumbnail_path = None
+        dimensions = None
+        
+        if mime_type.startswith('image/'):
+            # Generate multiple thumbnail sizes
+            thumbnails_result = await generate_multiple_thumbnails(storage_path, thumbnail_dir, entity_id)
+            if thumbnails_result['success']:
+                # Store the medium size thumbnail path for backward compatibility
+                thumbnail_path = thumbnails_result['thumbnails']['medium']['path']
+                # Store original dimensions from thumbnail generation
+                dimensions = thumbnails_result['original_dimensions']
+                logger.info(f"Multiple thumbnails generated for asset {entity_id}")
+            else:
+                thumbnail_path = None
+                logger.warning(f"Failed to generate thumbnails: {thumbnails_result['error']}")
+                
+            # Fallback to single thumbnail generation if multiple failed
+            if not thumbnails_result['success']:
+                thumbnail_filename = f"thumb_{entity_id}_{file.filename}.jpg"
+                thumbnail_path = os.path.join(thumbnail_dir, thumbnail_filename)
+                
+                thumbnail_result = await generate_thumbnail(storage_path, thumbnail_path)
+                if thumbnail_result['success']:
+                    thumbnail_path = thumbnail_result['thumbnail_path']
+                    logger.info(f"Fallback thumbnail generated: {thumbnail_path}")
+                else:
+                    thumbnail_path = None
+                    logger.warning(f"Failed to generate fallback thumbnail: {thumbnail_result['error']}")
+                
+                # Get original image dimensions
+                dimensions = await get_image_dimensions(storage_path)
+        
         # Check for duplicates
         existing_asset = await db.fetchrow(
             "SELECT id, filename FROM assets WHERE file_hash = $1",
@@ -215,15 +373,28 @@ async def upload_asset(
                 mime_type=mime_type,
                 file_hash=file_hash,
                 processing_status="completed",
-                created_at=datetime.utcnow()
+                created_at=datetime.utcnow(),
+                thumbnail_path=None,
+                dimensions=None
             )
         
-        # Insert new asset
+        # Update entity metadata with dimensions
+        entity_metadata = {"upload_context": context}
+        if dimensions:
+            entity_metadata["dimensions"] = dimensions
+        
+        await db.execute("""
+            UPDATE entities 
+            SET metadata = $1 
+            WHERE id = $2
+        """, json.dumps(entity_metadata), entity_id)
+        
+        # Insert new asset with thumbnail_path
         asset_id = await db.fetchval("""
-            INSERT INTO assets (id, filename, file_hash, file_size, mime_type, storage_path, upload_context, processing_status, processing_priority)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO assets (id, filename, file_hash, file_size, mime_type, storage_path, thumbnail_path, upload_context, processing_status, processing_priority)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
-        """, entity_id, file.filename, file_hash, file_size, mime_type, storage_path, context, "queued", priority)
+        """, entity_id, file.filename, file_hash, file_size, mime_type, storage_path, thumbnail_path, context, "queued", priority)
         
         # Cache in Redis
         await redis.setex(f"asset:{asset_id}", 3600, json.dumps({
@@ -242,7 +413,9 @@ async def upload_asset(
             mime_type=mime_type,
             file_hash=file_hash,
             processing_status="queued",
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
+            thumbnail_path=thumbnail_path,
+            dimensions=dimensions
         )
         
     except Exception as e:
@@ -281,7 +454,7 @@ async def list_assets(
         # Get assets
         offset = (page - 1) * limit
         assets_query = f"""
-            SELECT a.id, a.filename, a.file_size, a.mime_type, a.file_hash, a.processing_status, e.created_at
+            SELECT a.id, a.filename, a.file_size, a.mime_type, a.file_hash, a.processing_status, a.thumbnail_path, e.created_at, e.metadata
             FROM assets a
             JOIN entities e ON a.id = e.id
             {where_clause.replace('assets', 'a')}
@@ -301,7 +474,9 @@ async def list_assets(
                     mime_type=asset['mime_type'],
                     file_hash=asset['file_hash'],
                     processing_status=asset['processing_status'],
-                    created_at=asset['created_at']
+                    created_at=asset['created_at'],
+                    thumbnail_path=asset['thumbnail_path'],
+                    dimensions=json.loads(asset['metadata']).get('dimensions') if asset['metadata'] else None
                 )
                 for asset in assets
             ],
@@ -356,7 +531,7 @@ async def get_asset(
     """Get asset details by ID"""
     try:
         asset = await db.fetchrow("""
-            SELECT a.id, a.filename, a.file_size, a.mime_type, a.file_hash, a.processing_status, e.created_at
+            SELECT a.id, a.filename, a.file_size, a.mime_type, a.file_hash, a.processing_status, a.thumbnail_path, e.created_at, e.metadata
             FROM assets a
             JOIN entities e ON a.id = e.id
             WHERE a.id = $1
@@ -372,7 +547,9 @@ async def get_asset(
             mime_type=asset['mime_type'],
             file_hash=asset['file_hash'],
             processing_status=asset['processing_status'],
-            created_at=asset['created_at']
+            created_at=asset['created_at'],
+            thumbnail_path=asset['thumbnail_path'],
+            dimensions=json.loads(asset['metadata']).get('dimensions') if asset['metadata'] else None
         )
         
     except HTTPException:
@@ -380,6 +557,382 @@ async def get_asset(
     except Exception as e:
         logger.error("Failed to get asset", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to get asset: {str(e)}")
+
+# Get thumbnail endpoint
+@app.get("/api/v1/assets/{asset_id}/thumbnail")
+async def get_thumbnail(
+    asset_id: str,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Serve thumbnail for an asset"""
+    try:
+        # Get asset thumbnail path
+        asset = await db.fetchrow("""
+            SELECT thumbnail_path, filename, mime_type
+            FROM assets
+            WHERE id = $1
+        """, asset_id)
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        thumbnail_path = asset['thumbnail_path']
+        if not thumbnail_path or not os.path.exists(thumbnail_path):
+            # Return placeholder if no thumbnail exists
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+        
+        return FileResponse(
+            path=thumbnail_path,
+            media_type="image/jpeg",
+            headers={
+                'Cache-Control': 'public, max-age=3600',  # Cache for 1 hour
+                'Content-Disposition': f'inline; filename="thumb_{asset["filename"]}"'
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to serve thumbnail", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to serve thumbnail: {str(e)}")
+
+# Get thumbnail endpoint with size parameter
+@app.get("/api/v1/assets/{asset_id}/thumbnail/{size}")
+async def get_thumbnail_by_size(
+    asset_id: str,
+    size: str,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Serve thumbnail for an asset with specific size (small, medium, large)"""
+    try:
+        # Validate size parameter
+        valid_sizes = ['small', 'medium', 'large']
+        if size not in valid_sizes:
+            raise HTTPException(status_code=400, detail=f"Invalid size. Must be one of: {', '.join(valid_sizes)}")
+        
+        # Get asset info
+        asset = await db.fetchrow("""
+            SELECT filename, mime_type, thumbnail_path
+            FROM assets
+            WHERE id = $1
+        """, asset_id)
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        thumbnail_dir = "/tmp/dataflux_thumbnails"
+        
+        # Construct expected thumbnail filename
+        thumbnail_filename = f"{asset_id}_{size}.jpg"
+        thumbnail_path = os.path.join(thumbnail_dir, thumbnail_filename)
+        
+        # Check if specific size thumbnail exists
+        if os.path.exists(thumbnail_path):
+            return FileResponse(
+                path=thumbnail_path,
+                media_type="image/jpeg",
+                headers={
+                    'Cache-Control': 'public, max-age=7200',  # Cache for 2 hours
+                    'Content-Disposition': f'inline; filename="{asset_id}_{size}.jpg"'
+                }
+            )
+        
+        # Fallback to default thumbnail if specific size doesn't exist
+        default_thumbnail_path = asset['thumbnail_path']
+        if default_thumbnail_path and os.path.exists(default_thumbnail_path):
+            return FileResponse(
+                path=default_thumbnail_path,
+                media_type="image/jpeg",
+                headers={
+                    'Cache-Control': 'public, max-age=7200',
+                    'Content-Disposition': f'inline; filename="thumb_{asset["filename"]}"'
+                }
+            )
+        
+        # No thumbnail found
+        raise HTTPException(status_code=404, detail=f"No thumbnail found for size '{size}'")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to serve thumbnail", error=str(e), asset_id=asset_id, size=size)
+        raise HTTPException(status_code=500, detail=f"Failed to serve thumbnail: {str(e)}")
+
+# Generate thumbnail for existing assets endpoint
+@app.post("/api/v1/assets/{asset_id}/generate-thumbnail")
+async def generate_thumbnail_for_existing_asset(
+    asset_id: str,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Generate thumbnail for an existing asset that doesn't have one"""
+    try:
+        # Get asset info
+        asset = await db.fetchrow("""
+            SELECT a.storage_path, a.filename, a.mime_type, e.metadata
+            FROM assets a
+            JOIN entities e ON a.id = e.id
+            WHERE a.id = $1
+        """, asset_id)
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        # Check if it's an image
+        if not asset['mime_type'].startswith('image/'):
+            raise HTTPException(status_code=400, detail="Asset is not an image")
+        
+        storage_path = asset['storage_path']
+        if not os.path.exists(storage_path):
+            raise HTTPException(status_code=404, detail="Original file not found on disk")
+        
+        # Generate thumbnail
+        thumbnail_dir = "/tmp/dataflux_thumbnails"
+        os.makedirs(thumbnail_dir, exist_ok=True)
+        
+        thumbnail_filename = f"thumb_{asset_id}_{asset['filename']}.jpg"
+        thumbnail_path = os.path.join(thumbnail_dir, thumbnail_filename)
+        
+        thumbnail_result = await generate_thumbnail(storage_path, thumbnail_path)
+        
+        if not thumbnail_result['success']:
+            raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {thumbnail_result['error']}")
+        
+        # Get dimensions
+        dimensions = await get_image_dimensions(storage_path)
+        
+        # Update asset with thumbnail path
+        await db.execute("""
+            UPDATE assets 
+            SET thumbnail_path = $1 
+            WHERE id = $2
+        """, thumbnail_path, asset_id)
+        
+        # Update entity metadata with dimensions
+        if dimensions:
+            # Parse metadata if it's a JSON string
+            if isinstance(asset['metadata'], str):
+                current_metadata = json.loads(asset['metadata'] or '{}')
+            else:
+                current_metadata = asset['metadata'] or {}
+            current_metadata['dimensions'] = dimensions
+            
+            await db.execute("""
+                UPDATE entities 
+                SET metadata = $1 
+                WHERE id = $2
+            """, json.dumps(current_metadata), asset_id)
+        
+        logger.info(f"Generated thumbnail for asset {asset_id}: {thumbnail_path}")
+        
+        return {
+            "success": True,
+            "thumbnail_path": thumbnail_path,
+            "dimensions": dimensions,
+            "message": "Thumbnail generated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to generate thumbnail for existing asset", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {str(e)}")
+
+
+@app.post("/api/v1/assets/{asset_id}/generate-thumbnails-multiple")
+async def generate_multiple_thumbnails_for_asset(
+    asset_id: str,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Generate multiple thumbnail sizes for an existing asset"""
+    try:
+        # Get asset info
+        asset = await db.fetchrow("""
+            SELECT a.storage_path, a.filename, a.mime_type, e.metadata
+            FROM assets a
+            JOIN entities e ON a.id = e.id
+            WHERE a.id = $1
+        """, asset_id)
+        
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        # Check if it's an image
+        if not asset['mime_type'].startswith('image/'):
+            raise HTTPException(status_code=400, detail="Asset is not an image")
+        
+        storage_path = asset['storage_path']
+        if not os.path.exists(storage_path):
+            raise HTTPException(status_code=404, detail="Original file not found")
+        
+        # Generate multiple thumbnails
+        thumbnail_dir = "/tmp/dataflux_thumbnails"
+        os.makedirs(thumbnail_dir, exist_ok=True)
+        
+        thumbnails_result = await generate_multiple_thumbnails(
+            storage_path, thumbnail_dir, asset_id
+        )
+        
+        if not thumbnails_result['success']:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate thumbnails: {thumbnails_result['error']}"
+            )
+        
+        # Update asset with medium thumbnail path
+        medium_path = thumbnails_result['thumbnails']['medium']['path']
+        await db.execute("""
+            UPDATE assets SET thumbnail_path = $1 WHERE id = $2
+        """, medium_path, asset_id)
+        
+        # Update entity metadata with dimensions
+        dimensions = thumbnails_result['original_dimensions']
+        if dimensions:
+            if isinstance(asset['metadata'], str):
+                current_metadata = json.loads(asset['metadata'] or '{}')
+            else:
+                current_metadata = asset['metadata'] or {}
+            current_metadata['dimensions'] = dimensions
+            
+            await db.execute("""
+                UPDATE entities SET metadata = $1 WHERE id = $2
+            """, json.dumps(current_metadata), asset_id)
+        
+        logger.info(f"Generated multiple thumbnails for asset {asset_id}")
+        
+        return {
+            "success": True,
+            "thumbnails": {
+                size: data['path']
+                for size, data in thumbnails_result['thumbnails'].items()
+            },
+            "dimensions": dimensions,
+            "message": "Multiple thumbnails generated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to generate multiple thumbnails for asset",
+            error=str(e),
+            asset_id=asset_id
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate multiple thumbnails: {str(e)}"
+        )
+
+# Bulk generate thumbnails endpoint
+@app.post("/api/v1/assets/generate-thumbnails")
+async def bulk_generate_thumbnails(
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Generate thumbnails for all existing image assets that don't have thumbnails"""
+    try:
+        # Get all image assets without thumbnails
+        assets = await db.fetch("""
+            SELECT a.id, a.filename, a.storage_path, a.mime_type, e.metadata
+            FROM assets a
+            JOIN entities e ON a.id = e.id
+            WHERE a.mime_type LIKE 'image/%' 
+            AND (a.thumbnail_path IS NULL OR a.thumbnail_path = '')
+        """)
+        
+        results = []
+        success_count = 0
+        error_count = 0
+        
+        for asset in assets:
+            try:
+                storage_path = asset['storage_path']
+                if not os.path.exists(storage_path):
+                    results.append({
+                        "asset_id": str(asset['id']),
+                        "filename": asset['filename'],
+                        "status": "error",
+                        "message": "Original file not found on disk"
+                    })
+                    error_count += 1
+                    continue
+                
+                # Generate thumbnail
+                thumbnail_dir = "/tmp/dataflux_thumbnails"
+                os.makedirs(thumbnail_dir, exist_ok=True)
+                
+                thumbnail_filename = f"thumb_{asset['id']}_{asset['filename']}.jpg"
+                thumbnail_path = os.path.join(thumbnail_dir, thumbnail_filename)
+                
+                thumbnail_result = await generate_thumbnail(storage_path, thumbnail_path)
+                
+                if not thumbnail_result['success']:
+                    results.append({
+                        "asset_id": str(asset['id']),
+                        "filename": asset['filename'],
+                        "status": "error",
+                        "message": thumbnail_result['error']
+                    })
+                    error_count += 1
+                    continue
+                
+                # Get dimensions
+                dimensions = await get_image_dimensions(storage_path)
+                
+                # Update asset with thumbnail path
+                await db.execute("""
+                    UPDATE assets 
+                    SET thumbnail_path = $1 
+                    WHERE id = $2
+                """, thumbnail_path, asset['id'])
+                
+                # Update entity metadata with dimensions
+                if dimensions:
+                    # Parse metadata if it's a JSON string
+                    if isinstance(asset['metadata'], str):
+                        current_metadata = json.loads(asset['metadata'] or '{}')
+                    else:
+                        current_metadata = asset['metadata'] or {}
+                    current_metadata['dimensions'] = dimensions
+                    
+                    await db.execute("""
+                        UPDATE entities 
+                        SET metadata = $1 
+                        WHERE id = $2
+                    """, json.dumps(current_metadata), asset['id'])
+                
+                results.append({
+                    "asset_id": str(asset['id']),
+                    "filename": asset['filename'],
+                    "status": "success",
+                    "thumbnail_path": thumbnail_path,
+                    "dimensions": dimensions
+                })
+                success_count += 1
+                
+                logger.info(f"Generated thumbnail for asset {asset['id']}: {thumbnail_path}")
+                
+            except Exception as e:
+                results.append({
+                    "asset_id": str(asset['id']),
+                    "filename": asset['filename'],
+                    "status": "error",
+                    "message": str(e)
+                })
+                error_count += 1
+                logger.error(f"Failed to generate thumbnail for asset {asset['id']}", error=str(e))
+        
+        logger.info(f"Bulk thumbnail generation completed: {success_count} success, {error_count} errors")
+        
+        return {
+            "success": True,
+            "total_processed": len(assets),
+            "success_count": success_count,
+            "error_count": error_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error("Bulk thumbnail generation failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Bulk thumbnail generation failed: {str(e)}")
 
 # Analysis results endpoint
 @app.get("/api/v1/assets/{asset_id}/analysis")
@@ -518,7 +1071,7 @@ async def delete_asset(
     try:
         # Get asset info before deletion
         asset = await db.fetchrow("""
-            SELECT storage_path, filename
+            SELECT storage_path, filename, thumbnail_path
             FROM assets
             WHERE id = $1
         """, asset_id)
@@ -550,9 +1103,15 @@ async def delete_asset(
         
         # Delete file from disk
         storage_path = asset['storage_path']
+        thumbnail_path = asset['thumbnail_path']
+        
         if os.path.exists(storage_path):
             os.remove(storage_path)
             logger.info(f"Deleted file from disk: {storage_path}")
+        
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            os.remove(thumbnail_path)
+            logger.info(f"Deleted thumbnail from disk: {thumbnail_path}")
         
         # Delete from Redis cache
         await redis.delete(f"asset:{asset_id}")
@@ -588,7 +1147,7 @@ async def bulk_delete_assets(
             try:
                 # Get asset info
                 asset = await db.fetchrow("""
-                    SELECT storage_path, filename
+                    SELECT storage_path, filename, thumbnail_path
                     FROM assets
                     WHERE id = $1
                 """, asset_id)
@@ -605,8 +1164,13 @@ async def bulk_delete_assets(
                 
                 # Delete file from disk
                 storage_path = asset['storage_path']
+                thumbnail_path = asset['thumbnail_path']
+                
                 if os.path.exists(storage_path):
                     os.remove(storage_path)
+                
+                if thumbnail_path and os.path.exists(thumbnail_path):
+                    os.remove(thumbnail_path)
                 
                 # Delete from Redis
                 await redis.delete(f"asset:{asset_id}")

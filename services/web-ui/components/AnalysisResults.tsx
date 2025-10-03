@@ -146,151 +146,309 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ assetId, onClose }) =
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center space-x-3">
-            <Brain className="w-6 h-6 text-blue-500" />
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">Analyse-Ergebnisse</h2>
-              <p className="text-gray-600">{analysisData.filename}</p>
-            </div>
+      <div className="relative max-w-7xl w-full mx-4 h-[95vh] min-h-[95vh] overflow-hidden rounded-2xl shadow-2xl">
+        {/* Background Image */}
+        {analysisData.mime_type.startsWith('image/') ? (
+          <div className="absolute inset-0">
+            <img 
+              src={`http://localhost:2013/api/v1/assets/${analysisData.asset_id}/thumbnail/large`}
+              alt={analysisData.filename}
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                // Try fallback to medium thumbnail
+                const img = e.currentTarget as HTMLImageElement
+                if (!img.src.includes('/thumbnail/')) {
+                  img.src = `http://localhost:2013/api/v1/assets/${analysisData.asset_id}/thumbnail/medium`
+                } else if (!img.src.includes('/medium')) {
+                  img.src = `http://localhost:2013/api/v1/assets/${analysisData.asset_id}/thumbnail`
+                } else {
+                  img.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAwIiBoZWlnaHQ9IjYwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0iIzlmYTBhYSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QnJva2VuIEltYWdlPC90ZXh0Pjwvc3ZnPg=='
+                }
+              }}
+            />
+            {/* Dark overlay for better text readability */}
+            <div className="absolute inset-0 bg-black bg-opacity-30"></div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-2xl"
-          >
-            ✕
-          </button>
-        </div>
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900"></div>
+        )}
 
-        {/* Status */}
-        <div className="bg-gray-50 rounded-lg p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              {getStatusIcon(analysisData.processing_status)}
-              <span className="font-medium">
-                Status: {analysisData.processing_status}
-              </span>
-            </div>
-            <div className="text-sm text-gray-600">
-              {analysisData.summary.total_segments} Segmente • {analysisData.summary.total_features} Features
-            </div>
-          </div>
-        </div>
+        {/* Close Button */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 z-20 bg-white bg-opacity-20 hover:bg-opacity-30 backdrop-blur-sm rounded-full p-2 text-white transition-all duration-200"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Segments */}
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-              <Clock className="w-5 h-5 mr-2" />
-              Segmente ({analysisData.segments.length})
-            </h3>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {analysisData.segments.length > 0 ? (
-                analysisData.segments.map((segment) => (
-                  <div key={segment.id} className="bg-gray-50 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center space-x-2">
-                        {getTypeIcon(segment.type)}
-                        <span className="font-medium capitalize">{segment.type}</span>
-                      </div>
-                      <span className="text-sm text-gray-500">
-                        {formatConfidence(segment.confidence)}
+        {/* Main Content with Glassmorphism */}
+        <div className="relative z-10 h-full p-8 overflow-y-auto">
+          
+          {/* Floating Header */}
+          <div className="mb-8">
+            <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl p-6 border border-white border-opacity-20 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="bg-white bg-opacity-20 backdrop-blur-sm rounded-xl p-3">
+                    <Brain className="w-8 h-8 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-bold text-white mb-1">Analyse-Ergebnisse</h2>
+                    <p className="text-white text-opacity-80 text-lg">{analysisData.filename}</p>
+                  </div>
+                </div>
+                
+                {/* Status Badge */}
+                <div className="flex items-center space-x-3">
+                  <div className="bg-white bg-opacity-20 backdrop-blur-sm rounded-xl px-4 py-2 border border-white border-opacity-30">
+                    <div className="flex items-center space-x-2">
+                      {getStatusIcon(analysisData.processing_status)}
+                      <span className="font-medium text-white capitalize">
+                        {analysisData.processing_status}
                       </span>
                     </div>
-                    <div className="text-sm text-gray-600">
-                      Sequenz: {segment.sequence_number}
-                      {segment.duration && ` • Dauer: ${formatTime(segment.duration)}`}
-                    </div>
-                    {(Object.keys(segment.start_marker).length > 0 || Object.keys(segment.end_marker).length > 0) && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        <div>Start: {JSON.stringify(segment.start_marker, null, 2)}</div>
-                        <div>Ende: {JSON.stringify(segment.end_marker, null, 2)}</div>
-                      </div>
-                    )}
                   </div>
-                ))
-              ) : (
-                <div className="text-center py-8 text-gray-500">
-                  <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p>Keine Segmente gefunden</p>
+                  <div className="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl px-4 py-2">
+                    <span className="text-white text-opacity-80 text-sm">
+                      {analysisData.summary.total_features} Features • {analysisData.mime_type.split('/')[0]}
+                    </span>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
 
-          {/* Features */}
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-              <BarChart3 className="w-5 h-5 mr-2" />
-              Features ({analysisData.features.length})
-            </h3>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {analysisData.features.length > 0 ? (
-                analysisData.features.map((feature) => (
-                  <div key={feature.id} className="bg-gray-50 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center space-x-2">
-                        <Target className="w-4 h-4" />
-                        <span className="font-medium">{feature.type}</span>
-                        <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                          {feature.domain}
+          {/* Features Section */}
+          <div className="mb-8">
+            <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl p-6 border border-white border-opacity-20 shadow-xl">
+              <h3 className="text-xl font-semibold text-white mb-6 flex items-center">
+                <BarChart3 className="w-6 h-6 mr-3" />
+                Features ({analysisData.features.length})
+              </h3>
+              
+              <div className="space-y-4 max-h-64 overflow-y-auto custom-scrollbar">
+                {analysisData.features.length > 0 ? (
+                  analysisData.features.map((feature) => (
+                    <div key={feature.id} className="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl p-4 border border-white border-opacity-20 hover:bg-opacity-20 transition-all duration-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center space-x-3">
+                          <Target className="w-5 h-5 text-white" />
+                          <span className="font-medium text-white text-lg">{feature.type}</span>
+                          <span className="text-xs bg-white bg-opacity-20 text-white px-2 py-1 rounded-full backdrop-blur-sm">
+                            {feature.domain}
+                          </span>
+                        </div>
+                        <span className="text-sm text-white text-opacity-80 bg-white bg-opacity-10 px-3 py-1 rounded-full">
+                          {formatConfidence(feature.confidence)}
                         </span>
                       </div>
-                      <span className="text-sm text-gray-500">
-                        {formatConfidence(feature.confidence)}
-                      </span>
-                    </div>
-                    {Object.keys(feature.data).length > 0 && (
-                      <div className="mt-3">
-                        <FeatureDataTable data={feature.data} />
+                      
+                      {Object.keys(feature.data).length > 0 && (
+                        <div className="mt-4">
+                          <FeatureDataTableGlassmorphism data={feature.data} />
+                        </div>
+                      )}
+                      
+                      <div className="text-xs text-white text-opacity-60 mt-3 flex space-x-4">
+                        <span>Analyzer: {feature.analyzer_version}</span>
+                        {feature.created_at && <span>Erstellt: {new Date(feature.created_at).toLocaleString()}</span>}
                       </div>
-                    )}
-                    <div className="text-xs text-gray-500">
-                      <div>Analyzer: {feature.analyzer_version}</div>
-                      {feature.created_at && <div>Erstellt: {new Date(feature.created_at).toLocaleString()}</div>}
                     </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12 text-white text-opacity-60">
+                    <BarChart3 className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                    <p className="text-xl">Keine Features gefunden</p>
                   </div>
-                ))
-              ) : (
-                <div className="text-center py-8 text-gray-500">
-                  <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p>Keine Features gefunden</p>
-                </div>
-              )}
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Floating Summary */}
+          <div className="bg-gradient-to-r from-white from-opacity-10 to-white to-opacity-5 backdrop-blur-md rounded-2xl p-6 border border-white border-opacity-20 shadow-xl">
+            <h4 className="font-semibold text-white text-xl mb-4">Zusammenfassung</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white bg-opacity-10 rounded-xl p-4 backdrop-blur-sm border border-white border-opacity-20">
+                <span className="text-white text-opacity-80 font-medium block mb-1">Dateityp</span>
+                <p className="text-white text-xl font-bold capitalize">{analysisData.mime_type.split('/')[0]}</p>
+              </div>
+              <div className="bg-white bg-opacity-10 rounded-xl p-4 backdrop-blur-sm border border-white border-opacity-20">
+                <span className="text-white text-opacity-80 font-medium block mb-1">Features</span>
+                <p className="text-white text-xl font-bold">{analysisData.summary.total_features}</p>
+              </div>
+              <div className="bg-white bg-opacity-10 rounded-xl p-4 backdrop-blur-sm border border-white border-opacity-20">
+                <span className="text-white text-opacity-80 font-medium block mb-1">Status</span>
+                <p className="text-white text-xl font-bold capitalize">{analysisData.processing_status}</p>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Summary */}
-        <div className="mt-6 bg-blue-50 rounded-lg p-4">
-          <h4 className="font-semibold text-blue-900 mb-2">Zusammenfassung</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <span className="text-blue-700 font-medium">Dateityp:</span>
-              <p className="text-blue-600">{analysisData.mime_type}</p>
-            </div>
-            <div>
-              <span className="text-blue-700 font-medium">Segmente:</span>
-              <p className="text-blue-600">{analysisData.summary.total_segments}</p>
-            </div>
-            <div>
-              <span className="text-blue-700 font-medium">Features:</span>
-              <p className="text-blue-600">{analysisData.summary.total_features}</p>
-            </div>
-            <div>
-              <span className="text-blue-700 font-medium">Status:</span>
-              <p className="text-blue-600 capitalize">{analysisData.processing_status}</p>
-            </div>
-          </div>
-        </div>
+        {/* Custom Scrollbar Styles */}
+        <style jsx>{`
+          .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+          }
+          .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+          }
+        `}</style>
       </div>
     </div>
   )
 }
 
-// Komponente für die strukturierte Darstellung der Feature-Daten
+// Glassmorphism Feature Data Table
+const FeatureDataTableGlassmorphism = ({ data }: { data: any }) => {
+  const renderValue = (value: any, key: string): React.ReactNode => {
+    if (value === null || value === undefined) {
+      return <span className="text-white text-opacity-50 italic">null</span>
+    }
+    
+    if (typeof value === 'boolean') {
+      return (
+        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+          value ? 'bg-green-500 bg-opacity-20 text-green-200 border border-green-400 border-opacity-30' : 'bg-red-500 bg-opacity-20 text-red-200 border border-red-400 border-opacity-30'
+        }`}>
+          {value ? 'Ja' : 'Nein'}
+        </span>
+      )
+    }
+    
+    if (typeof value === 'number') {
+      if (key.includes('score') || key.includes('balance') || key.includes('density')) {
+        return <span className="font-mono text-yellow-300 bg-white bg-opacity-10 px-2 py-1 rounded-full text-sm">{(value * 100).toFixed(1)}%</span>
+      }
+      if (key.includes('brightness') || key.includes('contrast')) {
+        return <span className="font-mono text-purple-300 bg-white bg-opacity-10 px-2 py-1 rounded-full text-sm">{value.toFixed(1)}</span>
+      }
+      if (key.includes('x') || key.includes('y') || key.includes('width') || key.includes('height')) {
+        return <span className="font-mono text-cyan-300 bg-white bg-opacity-10 px-2 py-1 rounded-full text-sm">{value.toLocaleString()}</span>
+      }
+      return <span className="font-mono text-white bg-white bg-opacity-10 px-2 py-1 rounded-full text-sm">{value.toFixed(2)}</span>
+    }
+    
+    if (typeof value === 'string') {
+      if (value.startsWith('{') || value.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(value)
+          return renderValue(parsed, key)
+        } catch {
+          return <span className="text-white bg-white bg-opacity-10 px-2 py-1 rounded-full text-sm">{value}</span>
+        }
+      }
+      return <span className="text-white bg-white bg-opacity-10 px-2 py-1 rounded-full text-sm">{String(value)}</span>
+    }
+    
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return <span className="text-white text-opacity-50 italic">[]</span>
+      }
+      
+      if (value.length > 0 && typeof value[0] === 'object') {
+        return (
+          <div className="space-y-2">
+            {value.map((item, index) => (
+              <div key={index} className="bg-white bg-opacity-5 rounded-lg p-3 border border-white border-opacity-10">
+                <div className="text-white text-opacity-70 text-xs font-medium mb-2">Punkt {index + 1}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(item).map(([k, v]) => (
+                    <div key={k} className="flex justify-between text-xs">
+                      <span className="text-white text-opacity-60">{k}:</span>
+                      <span className="text-white font-mono">{renderValue(v, k)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      }
+      
+      return (
+        <div className="flex flex-wrap gap-1">
+          {value.map((item, index) => (
+            <span key={index} className="bg-white bg-opacity-20 text-white px-2 py-1 rounded-full text-xs border border-white border-opacity-30">
+              {renderValue(item, key)}
+            </span>
+          ))}
+        </div>
+      )
+    }
+    
+    if (typeof value === 'object') {
+      return (
+        <div className="bg-white bg-opacity-5 rounded-lg p-3 border border-white border-opacity-10">
+          {Object.entries(value).map(([k, v]) => (
+            <div key={k} className="flex justify-between mb-1 text-xs">
+              <span className="text-white text-opacity-70 font-medium">{k}:</span>
+              <span className="text-white">{renderValue(v, k)}</span>
+            </div>
+          ))}
+        </div>
+      )
+    }
+    
+    return <span className="text-white bg-white bg-opacity-10 px-2 py-1 rounded-full text-sm">{String(value)}</span>
+  }
+
+  if (typeof data === 'string') {
+    try {
+      const parsedData = JSON.parse(data)
+      return <FeatureDataTableGlassmorphism data={parsedData} />
+    } catch (error) {
+      return (
+        <div className="bg-white bg-opacity-5 rounded-lg p-4 border border-white border-opacity-10">
+          <div className="text-white text-sm font-mono bg-white bg-opacity-5 p-3 rounded-lg border border-white border-opacity-10">
+            {data}
+          </div>
+        </div>
+      )
+    }
+  }
+  
+  if (Array.isArray(data)) {
+    return (
+      <div className="bg-white bg-opacity-5 rounded-lg p-4 border border-white border-opacity-10">
+        <div className="text-white text-sm">
+          {data.map((item, index) => (
+            <div key={index} className="mb-2">
+              {renderValue(item, index.toString())}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+  
+  return (
+    <div className="space-y-2">
+      {Object.entries(data).map(([key, value]) => (
+        <div key={key} className="bg-white bg-opacity-5 rounded-lg p-3 border border-white border-opacity-10 hover:bg-opacity-10 transition-all duration-200">
+          <div className="text-white text-opacity-70 font-medium text-sm mb-1">
+            {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+          </div>
+          <div className="text-white">
+            {renderValue(value, key)}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Legacy FeatureDataTable (keeping for compatibility)
 const FeatureDataTable = ({ data }: { data: any }) => {
   const renderValue = (value: any, key: string): React.ReactNode => {
     // Debug-Logging

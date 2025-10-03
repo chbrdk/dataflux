@@ -31,7 +31,8 @@ interface Asset {
   file_size: number
   processing_status: 'queued' | 'processing' | 'completed' | 'failed'
   created_at: string
-  updated_at: string
+  thumbnail_path?: string
+  dimensions?: { width: number; height: number }
   metadata?: {
     duration?: number
     dimensions?: { width: number; height: number }
@@ -313,15 +314,19 @@ const Assets: React.FC = () => {
               <div key={asset.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
                 {/* Thumbnail */}
                 <div className="aspect-video bg-gray-100 flex items-center justify-center">
-                  {asset.metadata?.thumbnail ? (
+                  {asset.thumbnail_path ? (
                     <img 
-                      src={asset.metadata.thumbnail} 
+                      src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
                       alt={asset.filename}
                       className="w-full h-full object-cover"
+                      onError={(e) => {
+                        // Fallback to icon if thumbnail fails to load
+                        e.currentTarget.style.display = 'none'
+                        e.currentTarget.nextElementSibling?.setAttribute('style', 'display: block')
+                      }}
                     />
-                  ) : (
-                    <FileIcon className="w-12 h-12 text-gray-400" />
-                  )}
+                  ) : null}
+                  <FileIcon className={`w-12 h-12 text-gray-400 ${asset.thumbnail_path ? 'hidden' : ''}`} />
                 </div>
 
                 {/* Content */}
@@ -357,9 +362,9 @@ const Assets: React.FC = () => {
                       </div>
                     )}
 
-                    {asset.metadata?.dimensions && (
+                    {(asset.dimensions || asset.metadata?.dimensions) && (
                       <div className="text-xs">
-                        {asset.metadata.dimensions.width} × {asset.metadata.dimensions.height}
+                        {(asset.dimensions || asset.metadata?.dimensions)?.width} × {(asset.dimensions || asset.metadata?.dimensions)?.height}
                       </div>
                     )}
                   </div>
@@ -426,8 +431,19 @@ const Assets: React.FC = () => {
                       className="rounded border-gray-300"
                     />
                     
-                    <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <FileIcon className="w-6 h-6 text-gray-400" />
+                    <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      {asset.thumbnail_path ? (
+                        <img 
+                          src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
+                          alt={asset.filename}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                            e.currentTarget.nextElementSibling?.setAttribute('style', 'display: block')
+                          }}
+                        />
+                      ) : null}
+                      <FileIcon className={`w-6 h-6 text-gray-400 ${asset.thumbnail_path ? 'hidden' : ''}`} />
                     </div>
                     
                     <div className="flex-1 min-w-0">
