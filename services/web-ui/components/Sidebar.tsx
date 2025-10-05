@@ -14,7 +14,8 @@ import {
   FileText,
   Image,
   Video,
-  Music
+  Music,
+  Users
 } from 'lucide-react'
 
 const Sidebar: React.FC = () => {
@@ -55,6 +56,12 @@ const Sidebar: React.FC = () => {
       label: 'Analytics',
       icon: BarChart3,
       description: 'Processing analytics'
+    },
+    {
+      id: 'persons',
+      label: 'Personen',
+      icon: Users,
+      description: 'Recognized persons and faces'
     }
   ]
 

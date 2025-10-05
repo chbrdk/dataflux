@@ -19,3 +19,4 @@ aiohttp==3.9.1
 pydantic==2.5.0
 python-dotenv==1.0.0
 loguru==0.7.2
+structlog==23.2.0

@@ -36,6 +36,27 @@ except ImportError:
     DEEPFACE_AVAILABLE = False
 
 try:
+    # Try absolute import first
+    try:
+        from facenet_analyzer import FaceNetAnalyzer
+    except ImportError:
+        # Fallback to relative import
+        from .facenet_analyzer import FaceNetAnalyzer
+    FACENET_AVAILABLE = True
+except (ImportError, Exception):
+    FACENET_AVAILABLE = False
+
+# Import unified face analyzer
+try:
+    try:
+        from unified_face_analyzer import UnifiedFaceAnalyzer
+    except ImportError:
+        from .unified_face_analyzer import UnifiedFaceAnalyzer
+    UNIFIED_FACE_AVAILABLE = True
+except (ImportError, Exception):
+    UNIFIED_FACE_AVAILABLE = False
+
+try:
     import easyocr
     EASYOCR_AVAILABLE = True
 except ImportError:
@@ -54,6 +75,14 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 from sklearn.cluster import KMeans
+
+# Import scene classifier
+try:
+    from .scene_classifier import SceneClassifier
+    SCENE_CLASSIFIER_AVAILABLE = True
+except ImportError:
+    SCENE_CLASSIFIER_AVAILABLE = False
+
 try:
     from .base import BaseAnalyzer
 except ImportError:
@@ -79,6 +108,9 @@ class ImageAnalyzer(BaseAnalyzer):
         self.clip_model = None
         self.clip_preprocess = None
         self.ocr_reader = None
+        self.facenet_analyzer = None  # Legacy FaceNet analyzer (kept for compatibility)
+        self.unified_face_analyzer = None  # New unified face analyzer
+        self.scene_classifier = None  # Scene classification
         self.device = "cuda" if torch and torch.cuda.is_available() and CLIP_AVAILABLE else "cpu"
         
         # Initialize models lazily
@@ -86,6 +118,12 @@ class ImageAnalyzer(BaseAnalyzer):
         
         # Initialize YOLO early for testing
         self._init_yolo()
+        
+        # Initialize Unified Face Analyzer (replaces separate FaceNet + DeepFace)
+        self._init_unified_face_analyzer()
+        
+        # Initialize Scene Classifier
+        self._init_scene_classifier()
     
     def _init_yolo(self):
         """Initialize YOLO model"""
@@ -100,11 +138,51 @@ class ImageAnalyzer(BaseAnalyzer):
             logger.warning("⚠️ YOLO not available (ultralytics not installed)")
             self.yolo_model = None
     
+    def _init_facenet(self):
+        """Initialize FaceNet analyzer (Legacy - kept for compatibility)"""
+        if FACENET_AVAILABLE:
+            try:
+                self.facenet_analyzer = FaceNetAnalyzer()
+                logger.info("🧑 FaceNet analyzer successfully initialized")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize FaceNet: {e}")
+                self.facenet_analyzer = None
+        else:
+            logger.warning("⚠️ FaceNet not available (facenet-pytorch not installed)")
+            self.facenet_analyzer = None
+    
+    def _init_unified_face_analyzer(self):
+        """Initialize Unified Face Analyzer (FaceNet + DeepFace combined)"""
+        if UNIFIED_FACE_AVAILABLE:
+            try:
+                self.unified_face_analyzer = UnifiedFaceAnalyzer()
+                logger.info("🧑 ✨ Unified Face Analyzer successfully initialized (FaceNet + DeepFace)")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Unified Face Analyzer: {e}")
+                self.unified_face_analyzer = None
+        else:
+            logger.warning("⚠️ Unified Face Analyzer not available")
+            self.unified_face_analyzer = None
+    
+    def _init_scene_classifier(self):
+        """Initialize Scene Classifier for automatic image categorization"""
+        if SCENE_CLASSIFIER_AVAILABLE:
+            try:
+                self.scene_classifier = SceneClassifier()
+                logger.info("🎭 Scene Classifier successfully initialized")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Scene Classifier: {e}")
+                self.scene_classifier = None
+        else:
+            logger.warning("⚠️ Scene Classifier not available (CLIP not installed)")
+            self.scene_classifier = None
+    
     def get_supported_formats(self) -> List[str]:
         return self.supported_formats
     
     async def analyze(self, file_path: str, asset_data: Dict[str, Any]) -> Dict[str, Any]:
         """Comprehensive image analysis with multiple AI models"""
+        import os
         try:
             logger.info(f">>> ImageAnalyzer.analyze() called for {file_path}")
             logger.info(f"Starting ImageAnalyzer analysis for {file_path}")
@@ -129,7 +207,7 @@ class ImageAnalyzer(BaseAnalyzer):
             img = Image.open(file_path)
             width, height = img.size
             
-            logger.info(f"🖼️ Image loaded: {width}x{height}, format: {img.format}, mode: {img.mode}")
+            logger.info(f"🖼️ Image loaded: {width}x{height}, format: {img.format}, mode: {img.mode} - Using full resolution on M4")
             
             # Convert to numpy array for analysis
             import numpy as np
@@ -137,6 +215,7 @@ class ImageAnalyzer(BaseAnalyzer):
             
             # Comprehensive analysis with all features
             features = []
+            embeddings = []  # Initialize embeddings list
             success_count = 0
             total_attempts = 0
             
@@ -320,68 +399,120 @@ class ImageAnalyzer(BaseAnalyzer):
             except Exception as e:
                 logger.error(f"❌ Composition error: {e}")
             
-            # 6. Object Detection (YOLO) - guaranteed execution with logging
+            # 7. Scene Classification (CLIP)
+            total_attempts += 1
+            try:
+                if SCENE_CLASSIFIER_AVAILABLE and self.scene_classifier:
+                    logger.info("🎭 Starting scene classification...")
+                    scene_results = await self.scene_classifier.classify_scene(file_path)
+                    
+                    if scene_results.get('available', False):
+                        features.append({
+                            'type': 'scene_classification',
+                            'domain': 'semantic',
+                            'confidence': scene_results['confidence'],
+                            'data': {
+                                'primary_scene': scene_results['primary_scene'],
+                                'generic_scenes': scene_results['generic_scenes'],
+                                'specific_scenes': scene_results['specific_scenes'],
+                                'scene_tags': scene_results['scene_tags']
+                            },
+                            'metadata': {'analyzer': 'clip_scene_classifier'}
+                        })
+                        success_count += 1
+                        logger.info(f"✅ Scene classification successful: {scene_results['primary_scene']['scene']}")
+                    else:
+                        logger.warning(f"⚠️ Scene classification failed: {scene_results.get('error', 'Unknown error')}")
+                else:
+                    logger.warning("⚠️ Scene classifier not available")
+            except Exception as e:
+                logger.error(f"❌ Scene classification error: {e}")
+            
+            # 8. Object Detection (YOLO) - Works great on Mac M4!
             total_attempts += 1
             try:
                 logger.info(f"🔍 Starting YOLO analysis... YOLO_AVAILABLE: {YOLO_AVAILABLE}, yolo_model: {'None' if self.yolo_model is None else 'Initialized'}")
                 
                 if YOLO_AVAILABLE and self.yolo_model:
-                    logger.info("🚀 Running YOLO inference...")
-                    # Run YOLO detection directly
-                    results = self.yolo_model(file_path)
+                    logger.info("🚀 Running YOLO inference on M4...")
+                    # Run YOLO detection directly on numpy array
+                    results = self.yolo_model(image)
                     detected_objects = []
                     all_detections = []  # Include all detections regardless of confidence
                     
-                    logger.info(f"📊 YOLO returned {len(results)} result(s)")
-                    
-                    for r in results:
-                        if r.boxes is not None and len(r.boxes) > 0:
-                            logger.info(f"🔍 Processing {len(r.boxes)} detections...")
-                            for i, box in enumerate(r.boxes):
-                                confidence = float(box.conf[0])
-                                class_id = int(box.cls[0])
-                                class_name = self.yolo_model.names[class_id]
-                                
-                                detection = {
-                                    'confidence': confidence,
-                                    'class': class_name,
-                                    'class_id': class_id,
-                                    'bbox': box.xyxy[0].tolist()
-                                }
-                                all_detections.append(detection)
-                                
-                                # Only add high confidence detections to final result
-                                if confidence > 0.5:
-                                    detected_objects.append(detection)
-                                    logger.info(f"  ✅ High confidence detection: {class_name} ({confidence:.2f})")
-                                else:
-                                    logger.info(f"  ⚪ Low confidence detection: {class_name} ({confidence:.2f})")
-                        else:
-                            logger.info("📭 No boxes found in YOLO result")
-                    
-                    logger.info(f"🎯 YOLO Analysis Summary:")
-                    logger.info(f"  - Total detections: {len(all_detections)}")
-                    logger.info(f"  - High confidence (>0.5): {len(detected_objects)}")
-                    logger.info(f"  - Classes found: {list(set([d['class'] for d in all_detections]))}")
-                    
-                    # Always add YOLO feature, even if no objects detected
-                    features.append({
-                        'type': 'object_detection',
-                        'domain': 'visual',
-                        'confidence': 0.8,
-                        'data': {
-                            'objects': detected_objects,
-                            'all_detections': all_detections,  # Include all detections
-                            'total_count': len(detected_objects),
-                            'total_detections': len(all_detections),
-                            'detected_classes': list(set([d['class'] for d in all_detections])),
-                            'model': 'YOLOv8n',
-                            'status': 'completed'
-                        },
-                        'metadata': {'analyzer': 'yolo_detection'}
-                    })
-                    success_count += 1
-                    logger.info(f"✅ YOLO analysis completed successfully")
+                    if results is None:
+                        logger.warning("⚠️ YOLO results are None - skipping object detection")
+                        features.append({
+                            'type': 'object_detection',
+                            'domain': 'visual',
+                            'confidence': 0.0,
+                            'data': {
+                                'objects': [],
+                                'total_objects': 0,
+                                'model': 'YOLOv8',
+                                'status': 'timeout',
+                                'reason': 'YOLO inference timed out or failed'
+                            },
+                            'metadata': {'analyzer': 'yolo'}
+                        })
+                        success_count += 1
+                    else:
+                        logger.info(f"📊 YOLO returned {len(results)} result(s)")
+                        
+                        for r in results:
+                            if r.boxes is not None and len(r.boxes) > 0:
+                                logger.info(f"🔍 Processing {len(r.boxes)} detections...")
+                                for i, box in enumerate(r.boxes):
+                                    confidence = float(box.conf[0])
+                                    class_id = int(box.cls[0])
+                                    class_name = self.yolo_model.names[class_id]
+                                    
+                                    detection = {
+                                        'confidence': confidence,
+                                        'class': class_name,
+                                        'class_id': class_id,
+                                        'bbox': box.xyxy[0].tolist()
+                                    }
+                                    all_detections.append(detection)
+                                    
+                                    # Skip person class (class_id 0) - FaceNet handles people
+                                    if class_id == 0:
+                                        logger.info(f"  ⏭️ Skipping person detection (handled by FaceNet): {class_name} ({confidence:.2f})")
+                                        continue
+                                    
+                                    # Only add high confidence non-person detections to final result
+                                    if confidence > 0.5:
+                                        detected_objects.append(detection)
+                                        logger.info(f"  ✅ High confidence object: {class_name} ({confidence:.2f})")
+                                    else:
+                                        logger.info(f"  ⚪ Low confidence object: {class_name} ({confidence:.2f})")
+                            else:
+                                logger.info("📭 No boxes found in YOLO result")
+                        
+                        logger.info(f"🎯 YOLO Object Detection Summary (non-person focus):")
+                        logger.info(f"  - Total detections: {len(all_detections)}")
+                        logger.info(f"  - Non-person objects (>0.5): {len(detected_objects)}")
+                        logger.info(f"  - Object classes found: {list(set([d['class'] for d in all_detections if d['class_id'] != 0]))}")
+                        
+                        # Always add YOLO feature, even if no objects detected
+                        features.append({
+                            'type': 'object_detection',
+                            'domain': 'visual',
+                            'confidence': 0.8,
+                            'data': {
+                                'objects': detected_objects,
+                                'all_detections': all_detections,  # Include all detections
+                                'total_count': len(detected_objects),
+                                'total_detections': len(all_detections),
+                                'detected_classes': list(set([d['class'] for d in all_detections if d['class_id'] != 0])),
+                                'model': 'YOLOv8n',
+                                'focus': 'non-person_objects',
+                                'status': 'completed'
+                            },
+                            'metadata': {'analyzer': 'yolo_detection'}
+                        })
+                        success_count += 1
+                        logger.info(f"✅ YOLO analysis completed successfully")
                 else:
                     logger.warning("⚠️ YOLO not available, adding placeholder feature")
                     features.append({
@@ -417,98 +548,79 @@ class ImageAnalyzer(BaseAnalyzer):
                 })
                 logger.info("✅ YOLO error feature added")
             
-            # 7. Face Analysis (DeepFace) - add safely
+            # 7. ✨ Unified Face Analysis (FaceNet Detection → Database Check → DeepFace Demographics)
             total_attempts += 1
             try:
-                # Dynamic check for DeepFace availability
-                try:
-                    from deepface import DeepFace
-                    deepface_available_runtime = True
-                    logger.info(f"🧑 Starting DeepFace analysis... DEEPFACE_AVAILABLE: {DEEPFACE_AVAILABLE}, Runtime check: {deepface_available_runtime}")
-                except ImportError:
-                    deepface_available_runtime = False
-                    logger.info(f"🧑 DeepFace runtime check failed: {DEEPFACE_AVAILABLE}")
+                logger.info(f"🧑✨ Starting Unified Face Analysis... UNIFIED_FACE_AVAILABLE: {UNIFIED_FACE_AVAILABLE}, unified_face_analyzer: {'None' if self.unified_face_analyzer is None else 'Initialized'}")
                 
-                if deepface_available_runtime:
-                    logger.info("🚀 Running DeepFace inference...")
+                if UNIFIED_FACE_AVAILABLE and self.unified_face_analyzer:
+                    logger.info("🚀 Running Unified Face Analysis (FaceNet + DeepFace)...")
                     
-                    # DeepFace analysis (import fresh in runtime)
-                    face_analyses = DeepFace.analyze(
-                        img_path=file_path,
-                        actions=['age', 'gender', 'race', 'emotion'],
-                        enforce_detection=False,
-                        silent=True
-                    )
+                    # Run unified face analysis
+                    unified_result = await self.unified_face_analyzer.analyze(file_path, asset_data)
                     
-                    logger.info(f"📊 DeepFace returned {len(face_analyses)} face(s)")
+                    # Extract unified features and embeddings
+                    unified_features = unified_result.get('features', [])
+                    unified_embeddings = unified_result.get('embeddings', [])
                     
-                    # Process results
-                    faces = []
-                    for i, face in enumerate(face_analyses):
-                        face_data = {
-                            'face_id': i,
-                            'age': face.get('age', 'unknown'),
-                            'gender': face.get('dominant_gender', 'unknown'),
-                            'race': face.get('dominant_race', 'unknown'),
-                            'emotion': face.get('dominant_emotion', 'unknown'),
-                            'confidence': {
-                                'age': face.get('age', 0),
-                                'gender': face.get(f"{face.get('dominant_gender', '')}_confidence", 0),
-                                'race': face.get(f"{face.get('dominant_race', '')}_confidence", 0),
-                                'emotion': face.get(f"{face.get('dominant_emotion', '')}_confidence", 0)
-                            }
-                        }
-                        faces.append(face_data)
-                        logger.info(f"  🧑 Face {i}: {face_data['age']} {face_data['gender']}, emotion: {face_data['emotion']}")
+                    logger.info(f"📊 Unified Face Analysis returned {len(unified_features)} feature(s) and {len(unified_embeddings)} embeddings")
                     
-                    features.append({
-                        'type': 'face_analysis',
-                        'domain': 'visual',
-                        'confidence': 0.8,
-                        'data': {
-                            'faces': faces,
-                            'total_faces': len(faces),
-                            'model': 'DeepFace',
-                            'status': 'completed'
-                        },
-                        'metadata': {'analyzer': 'deepface'}
-                    })
+                    # Add unified features to main result
+                    features.extend(unified_features)
+                    
+                    # Add unified embeddings to main result
+                    embeddings.extend(unified_embeddings)
+                    
                     success_count += 1
-                    logger.info(f"✅ DeepFace analysis completed: {len(faces)} faces detected")
+                    logger.info(f"✅ Unified Face Analysis completed successfully")
                 else:
-                    logger.warning("⚠️ DeepFace not available, adding placeholder feature")
+                    logger.warning("⚠️ Unified Face Analyzer not available, adding placeholder feature")
                     features.append({
-                        'type': 'face_analysis',
+                        'type': 'faces',
                         'domain': 'visual',
                         'confidence': 0.0,
                         'data': {
                             'faces': [],
                             'total_faces': 0,
-                            'model': 'DeepFace',
+                            'known_faces': 0,
+                            'new_faces': 0,
+                            'detection_model': 'FaceNet-MTCNN',
+                            'recognition_model': 'FaceNet-InceptionResnetV1',
+                            'demographics_model': 'DeepFace',
                             'status': 'unavailable',
-                            'error': 'DeepFace not available'
+                            'error': 'Unified Face Analyzer not available'
                         },
-                        'metadata': {'analyzer': 'deepface'}
+                        'metadata': {
+                            'analyzer': 'unified_face_analyzer',
+                            'workflow': 'facenet_detection → database_check → deepface_demographics'
+                        }
                     })
                     success_count += 1
-                    logger.info("✅ DeepFace placeholder added")
+                    logger.info("✅ Unified Face Analyzer placeholder added")
             except Exception as e:
-                logger.error(f"❌ Face analysis error: {e}")
+                logger.error(f"❌ Unified Face Analysis error: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 # Add error feature
                 features.append({
-                    'type': 'face_analysis',
+                    'type': 'faces',
                     'domain': 'visual',
                     'confidence': 0.0,
                     'data': {
                         'faces': [],
                         'total_faces': 0,
-                        'model': 'DeepFace',
+                        'known_faces': 0,
+                        'new_faces': 0,
+                        'detection_model': 'FaceNet-MTCNN',
                         'status': 'error',
                         'error': str(e)
                     },
-                    'metadata': {'analyzer': 'deepface'}
+                    'metadata': {
+                        'analyzer': 'unified_face_analyzer',
+                        'workflow': 'facenet_detection → database_check → deepface_demographics'
+                    }
                 })
-                logger.info("✅ DeepFace error feature added")
+                logger.info("✅ Unified Face Analysis error feature added")
             
             logger.info(f"🎯 Analysis complete: {success_count}/{total_attempts} analyzers successful!")
             
@@ -536,10 +648,11 @@ class ImageAnalyzer(BaseAnalyzer):
             result = {
                 'segments': [],
                 'features': features,
-                'embeddings': [],
+                'embeddings': embeddings,
                 'metadata': {
                     'analysis_version': '0.1-test',
-                    'analyzer': 'simple_test'
+                    'analyzer': 'simple_test',
+                    'models_used': self._get_models_used()
                 }
             }
             
@@ -581,11 +694,33 @@ class ImageAnalyzer(BaseAnalyzer):
             logger.error(f"Model initialization failed: {str(e)}")
     
     async def _load_image(self, file_path: str) -> Optional[np.ndarray]:
-        """Load image as numpy array"""
+        """Load image as numpy array with automatic resizing for large images"""
         try:
             image = cv2.imread(file_path)
             if image is not None:
-                return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                # Convert to RGB
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                
+                # Check if image is too large and resize if necessary
+                height, width = image.shape[:2]
+                max_dimension = 2048  # Maximum dimension for analysis
+                
+                if height > max_dimension or width > max_dimension:
+                    logger.info(f"🔄 Resizing large image from {width}x{height} to fit analysis requirements")
+                    
+                    # Calculate new dimensions maintaining aspect ratio
+                    if height > width:
+                        new_height = max_dimension
+                        new_width = int((width * max_dimension) / height)
+                    else:
+                        new_width = max_dimension
+                        new_height = int((height * max_dimension) / width)
+                    
+                    # Resize image
+                    image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+                    logger.info(f"✅ Image resized to {new_width}x{new_height}")
+                
+                return image
             return None
         except Exception as e:
             logger.error(f"Failed to load image: {str(e)}")
@@ -598,8 +733,14 @@ class ImageAnalyzer(BaseAnalyzer):
             models.append("YOLOv8")
         if CLIP_AVAILABLE and self.clip_model:
             models.append("CLIP")
-        if DEEPFACE_AVAILABLE:
-            models.append("DeepFace")
+        if UNIFIED_FACE_AVAILABLE and self.unified_face_analyzer:
+            models.append("UnifiedFaceAnalyzer (FaceNet + DeepFace)")
+        elif DEEPFACE_AVAILABLE or FACENET_AVAILABLE:
+            # Legacy support
+            if DEEPFACE_AVAILABLE:
+                models.append("DeepFace")
+            if FACENET_AVAILABLE and self.facenet_analyzer:
+                models.append("FaceNet")
         if EASYOCR_AVAILABLE and self.ocr_reader:
             models.append("EasyOCR")
         if OPENAI_AVAILABLE:

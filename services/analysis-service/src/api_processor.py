@@ -30,7 +30,7 @@ class APIAssetProcessor:
     """Asset processor der über API kommuniziert"""
     
     def __init__(self):
-        self.ingestion_url = "http://localhost:2013"
+        self.ingestion_url = os.getenv("INGESTION_SERVICE_URL", "http://localhost:2013")
         self.running = False
         
         # Initialize analyzers
@@ -41,7 +41,7 @@ class APIAssetProcessor:
         os.makedirs(self.storage_base_path, exist_ok=True)
         
         # Database connection
-        self.db_url = "postgresql://dataflux_user:secure_password_here@localhost:2001/dataflux"
+        self.db_url = os.getenv("DATABASE_URL", "postgresql://dataflux_user:secure_password_here@localhost:7002/dataflux")
         
     def get_queued_assets(self):
         """Hole queued assets vom Ingestion Service"""
@@ -281,8 +281,8 @@ class APIAssetProcessor:
                     segment_id,  # NULL for images, segment_id for videos
                     feature.get('domain', 'unknown'),
                     feature.get('type', 'unknown'),
-                    json.dumps(feature.get('data', {})),
-                    feature.get('confidence', 0.0),
+                    json.dumps(feature.get('data', {}), default=str),  # Convert numpy types to strings
+                    float(feature.get('confidence', 0.0)),  # Ensure Python float
                     feature.get('metadata', {}).get('analyzer', 'unknown')
                     )
                 

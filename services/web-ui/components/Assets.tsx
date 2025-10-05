@@ -158,8 +158,8 @@ const Assets: React.FC = () => {
   // Create analysis data for display (real or mock)
   const getAnalysisData = (asset: Asset) => {
     // Try to use real analysis data first
-    if (asset.metadata?.analysis_result?.analysis?.features) {
-      const analysis = asset.metadata.analysis_result.analysis
+    if ((asset.metadata as any)?.analysis_result?.analysis?.features) {
+      const analysis = (asset.metadata as any).analysis_result.analysis
       return {
         asset_id: asset.id,
         filename: asset.filename,
@@ -580,16 +580,12 @@ const Assets: React.FC = () => {
       )}
 
       {/* Analysis Results Modal */}
-      {selectedAssetForAnalysis && (() => {
-        const asset = assets.find((a: Asset) => a.id === selectedAssetForAnalysis)
-        if (!asset) return null
-        return (
-          <AnalysisResults
-            analysisData={getAnalysisData(asset)}
-            onClose={() => setSelectedAssetForAnalysis(null)}
-          />
-        )
-      })()}
+      {selectedAssetForAnalysis && (
+        <AnalysisResults
+          assetId={selectedAssetForAnalysis}
+          onClose={() => setSelectedAssetForAnalysis(null)}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       {showDeleteConfirm && assetToDelete && (

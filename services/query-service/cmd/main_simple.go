@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -115,6 +116,7 @@ func main() {
 		v1.GET("/segments/:id", handleGetSegment)
 		v1.GET("/relationships", handleGetRelationships)
 		v1.GET("/stats", handleGetStats)
+		v1.GET("/assets/:id/features", handleGetAssetFeatures)
 	}
 
 	// Health check
@@ -542,4 +544,40 @@ func enrichWithSegments(results []SearchResult) {
 			},
 		}
 	}
+}
+
+// handleGetAssetFeatures retrieves features for a specific asset
+func handleGetAssetFeatures(c *gin.Context) {
+	assetID := c.Param("id")
+	
+	// Proxy request to Ingestion Service
+	ingestionURL := getEnv("INGESTION_SERVICE_URL", "http://localhost:2013")
+	resp, err := http.Get(ingestionURL + "/api/v1/assets/" + assetID + "/features")
+	
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "Failed to fetch features from ingestion service",
+			"details": err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(resp.StatusCode, gin.H{
+			"error": "Asset features not found",
+		})
+		return
+	}
+	
+	// Forward the response
+	var features interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&features); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to decode features response",
+		})
+		return
+	}
+	
+	c.JSON(http.StatusOK, features)
 }

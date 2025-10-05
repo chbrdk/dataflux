@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type ViewType = 'dashboard' | 'upload' | 'search' | 'assets' | 'analytics'
+export type ViewType = 'dashboard' | 'upload' | 'search' | 'assets' | 'analytics' | 'persons'
 
 interface AppState {
   // UI State

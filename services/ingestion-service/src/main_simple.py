@@ -44,8 +44,8 @@ structlog.configure(
 logger = structlog.get_logger()
 
 # Configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://dataflux_user:secure_password_here@localhost:2001/dataflux")
-REDIS_URL = os.getenv("REDIS_URL", "redis://default:secure_redis_password_here@localhost:2002/0")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://dataflux_user:secure_password_here@dataflux-postgres:5432/dataflux")
+REDIS_URL = os.getenv("REDIS_URL", "redis://:secure_redis_password_here@dataflux-redis:6379")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -125,57 +125,27 @@ async def start_analysis_for_asset(asset_id: str, file_path: str, mime_type: str
         return None
 
 async def process_asset_automatically(asset_id: str, file_path: str, mime_type: str):
-    """Automatically process an asset after upload"""
+    """Automatically process an asset after upload - set to queued for Analysis Service"""
     try:
         logger.info(f"🚀 Starting automatic processing for asset {asset_id}")
         
         # Get a new database connection
         async with db_pool.acquire() as db:
-            # Status is already 'processing' from upload, no need to update
-            
             # Generate thumbnails for images
             if mime_type.startswith('image/'):
                 logger.info(f"📸 Generating thumbnails for asset {asset_id}")
                 await generate_multiple_thumbnails(file_path, "/tmp/dataflux_thumbnails", asset_id)
                 logger.info(f"✅ Thumbnails generated for asset {asset_id}")
             
-            # Start analysis
-            logger.info(f"🔬 Starting analysis for asset {asset_id}")
-            analysis_result = await start_analysis_for_asset(asset_id, file_path, mime_type)
-            
-            # Store analysis result in entity metadata
-            if analysis_result:
-                features_count = len(analysis_result.get('analysis', {}).get('features', []))
-                logger.info(f"💾 Storing {features_count} analysis features for asset {asset_id}")
-                
-                entity_metadata = await db.fetchval("""
-                    SELECT metadata FROM entities WHERE id = $1
-                """, asset_id)
-                
-                if entity_metadata:
-                    metadata_dict = json.loads(entity_metadata) if isinstance(entity_metadata, str) else entity_metadata
-                else:
-                    metadata_dict = {}
-                
-                metadata_dict["analysis_result"] = analysis_result
-                
-                await db.execute("""
-                    UPDATE entities 
-                    SET metadata = $1 
-                    WHERE id = $2
-                """, json.dumps(metadata_dict), asset_id)
-                logger.info(f"✅ Analysis result stored for asset {asset_id} ({len(json.dumps(metadata_dict))} bytes)")
-            else:
-                logger.warning(f"⚠️ No analysis result to store for asset {asset_id}")
-            
-            # Update status to completed
+            # Set status to 'queued' so Analysis Service can pick it up
+            logger.info(f"📋 Setting asset {asset_id} to 'queued' for Analysis Service")
             await db.execute("""
                 UPDATE assets 
-                SET processing_status = 'completed'
+                SET processing_status = 'queued'
                 WHERE id = $1
             """, asset_id)
             
-            logger.info(f"✅ Automatic processing complete for asset {asset_id}")
+            logger.info(f"✅ Asset {asset_id} ready for analysis by Analysis Service")
             
     except Exception as e:
         logger.error(f"❌ Failed to automatically process asset {asset_id}: {str(e)}")
@@ -360,16 +330,22 @@ async def health_check():
             async with db_pool.acquire() as conn:
                 await conn.fetchval("SELECT 1")
         
-        # Check Redis connection
+        # Check Redis connection (without authentication for health check)
         if redis_client:
-            await redis_client.ping()
+            try:
+                await redis_client.ping()
+                redis_status = "connected"
+            except Exception as e:
+                redis_status = f"error: {str(e)}"
+        else:
+            redis_status = "not_initialized"
         
         return {
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
             "services": {
                 "database": "connected",
-                "redis": "connected"
+                "redis": redis_status
             }
         }
     except Exception as e:
@@ -1141,12 +1117,22 @@ async def get_asset_analysis(
         
         # Process features
         for feature in features:
+            # Parse feature_data if it's a string (JSONB is returned as string from DB)
+            feature_data_parsed = feature['feature_data']
+            if isinstance(feature_data_parsed, str):
+                try:
+                    feature_data_parsed = json.loads(feature_data_parsed)
+                except:
+                    feature_data_parsed = {}
+            elif feature_data_parsed is None:
+                feature_data_parsed = {}
+            
             feature_data = {
                 "id": str(feature['id']),
                 "type": feature['feature_type'],
                 "domain": feature['feature_domain'],
                 "confidence": float(feature['confidence']) if feature['confidence'] else None,
-                "data": feature['feature_data'] if feature['feature_data'] else {},
+                "data": feature_data_parsed,
                 "analyzer_version": feature['analyzer_version'],
                 "created_at": feature['created_at'].isoformat() if feature['created_at'] else None
             }
@@ -1413,6 +1399,162 @@ async def bulk_delete_assets(
     except Exception as e:
         logger.error("Bulk delete failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/persons")
+async def get_all_persons():
+    """Get all recognized persons from face database"""
+    try:
+        # Read face database file
+        face_db_path = "/tmp/dataflux_face_database.json"
+        if not os.path.exists(face_db_path):
+            return {"persons": []}
+        
+        with open(face_db_path, 'r') as f:
+            data = json.load(f)
+            face_database = data.get('face_database', {})
+        
+        persons = []
+        for face_id, face_info in face_database.items():
+            # Get avatar base64 if available
+            avatar_base64 = None
+            if 'avatar_filename' in face_info:
+                avatar_path = f"/tmp/dataflux_avatars/{face_info['avatar_filename']}"
+                if os.path.exists(avatar_path):
+                    try:
+                        with open(avatar_path, "rb") as img_file:
+                            import base64
+                            avatar_base64 = f"data:image/jpeg;base64,{base64.b64encode(img_file.read()).decode('utf-8')}"
+                    except Exception as e:
+                        logger.warning(f"Failed to load avatar for {face_id}: {e}")
+            
+            person = {
+                "face_id": face_id,
+                "identity": face_info.get('identity', f'Person_{face_id}'),
+                "avatar_base64": avatar_base64,
+                "appearance_count": face_info.get('appearance_count', 1),
+                "first_seen": face_info.get('first_seen', '0'),
+                "last_seen": face_info.get('last_seen', '0'),
+                "confidence": 0.9  # Default confidence
+            }
+            persons.append(person)
+        
+        # Sort by appearance count (most frequent first)
+        persons.sort(key=lambda x: x['appearance_count'], reverse=True)
+        
+        return {"persons": persons}
+        
+    except Exception as e:
+        logger.error(f"Failed to get persons: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get persons: {str(e)}")
+
+@app.get("/api/v1/persons/{face_id}/images")
+async def get_person_images(face_id: str):
+    """Get all images where a specific person appears"""
+    try:
+        # Query database for all face_recognition features with this face_id
+        async with asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5) as pool:
+            async with pool.acquire() as conn:
+                # Get all features with face_recognition type and matching face_id
+                features = await conn.fetch("""
+                    SELECT f.asset_id, f.feature_data, a.filename, f.created_at
+                    FROM features f
+                    JOIN assets a ON f.asset_id = a.id
+                    WHERE f.feature_type = 'face_recognition'
+                    AND f.feature_data::text LIKE $1
+                    ORDER BY f.created_at DESC
+                """, f'%"face_id": "{face_id}"%')
+                
+                images = []
+                for feature in features:
+                    try:
+                        feature_data = feature['feature_data']
+                        if isinstance(feature_data, str):
+                            feature_data = json.loads(feature_data)
+                        
+                        # Extract face quality and confidence from feature data
+                        face_quality = feature_data.get('face_quality', 'unknown')
+                        confidence = feature_data.get('confidence', 0.0)
+                        
+                        images.append({
+                            "asset_id": str(feature['asset_id']),
+                            "filename": feature['filename'],
+                            "uploaded_at": feature['created_at'].isoformat() if feature['created_at'] else None,
+                            "confidence": confidence,
+                            "face_quality": face_quality
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to parse feature data for asset {feature['asset_id']}: {e}")
+                        continue
+                
+                return {"images": images}
+                
+    except Exception as e:
+        logger.error(f"Failed to get person images for {face_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get person images: {str(e)}")
+
+@app.get("/api/v1/assets/{asset_id}/features")
+async def get_asset_features(
+    asset_id: str,
+    feature_type: Optional[str] = None,
+    domain: Optional[str] = None,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Get all features for an asset, optionally filtered by type or domain"""
+    
+    # Check if asset exists
+    asset = await db.fetchrow(
+        "SELECT id FROM assets WHERE id = $1",
+        asset_id
+    )
+    
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    # Build WHERE clause
+    where_clause = "WHERE f.asset_id = $1"
+    params = [asset_id]
+    param_count = 1
+    
+    if feature_type:
+        param_count += 1
+        where_clause += f" AND f.feature_type = ${param_count}"
+        params.append(feature_type)
+    
+    if domain:
+        param_count += 1
+        where_clause += f" AND f.feature_domain = ${param_count}"
+        params.append(domain)
+    
+    # Get features
+    features = await db.fetch(f"""
+        SELECT f.id, f.feature_type, f.feature_domain, f.confidence,
+               f.feature_data, f.created_at
+        FROM features f
+        {where_clause}
+        ORDER BY f.created_at DESC
+    """, *params)
+    
+    # Format response
+    formatted_features = []
+    for feature in features:
+        formatted_features.append({
+            "id": str(feature['id']),
+            "type": feature['feature_type'],
+            "domain": feature['feature_domain'],
+            "confidence": float(feature['confidence']),
+            "data": json.loads(feature['feature_data']) if feature['feature_data'] else {},
+            "created_at": feature['created_at']
+        })
+    
+    return {
+        "asset_id": asset_id,
+        "features": formatted_features,
+        "total": len(formatted_features),
+        "filters": {
+            "feature_type": feature_type,
+            "domain": domain
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

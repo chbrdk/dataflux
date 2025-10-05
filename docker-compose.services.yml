@@ -23,6 +23,11 @@ services:
     container_name: dataflux-analysis
     ports:
       - "2014:2014"
+    volumes:
+      - ./services/analysis-service:/app
+      - ./shared:/app/shared
+      - ./yolov8n.pt:/app/yolov8n.pt
+      - /tmp/dataflux-uploads:/tmp/dataflux-uploads
     environment:
       - DATABASE_URL=postgresql://dataflux_user:secure_password_here@dataflux-postgres:5432/dataflux
       - REDIS_URL=redis://dataflux-redis:6379
@@ -34,6 +39,14 @@ services:
     networks:
       - dataflux-network
     restart: unless-stopped
+    # Add GPU support if available
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   dataflux-web-ui:
     build: ./services/web-ui

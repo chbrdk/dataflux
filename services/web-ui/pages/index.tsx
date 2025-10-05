@@ -4,11 +4,10 @@ import { useState, useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'react-hot-toast'
 import Layout from '../components/Layout'
-import Dashboard from '../components/Dashboard'
 import Upload from '../components/Upload'
 import Search from '../components/Search'
 import Assets from '../components/Assets'
-import Analytics from '../components/Analytics'
+import Persons from '../components/Persons'
 import { useAppStore } from '../store/appStore'
 
 const queryClient = new QueryClient({
@@ -35,7 +34,7 @@ const Home: NextPage = () => {
   const renderContent = () => {
     switch (currentView) {
       case 'dashboard':
-        return <Dashboard />
+        return <div className="p-6"><h2 className="text-2xl font-semibold">Dashboard</h2><p className="mt-4">Dashboard wird geladen...</p></div>
       case 'upload':
         return <Upload />
       case 'search':
@@ -43,9 +42,11 @@ const Home: NextPage = () => {
       case 'assets':
         return <Assets />
       case 'analytics':
-        return <Analytics />
+        return <div className="p-6"><h2 className="text-2xl font-semibold">Analytics</h2><p className="mt-4">Analytics wird geladen...</p></div>
+      case 'persons':
+        return <Persons />
       default:
-        return <Dashboard />
+        return <div className="p-6"><h2 className="text-2xl font-semibold">Dashboard</h2><p className="mt-4">Dashboard wird geladen...</p></div>
     }
   }
 

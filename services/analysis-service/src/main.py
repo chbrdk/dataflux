@@ -337,10 +337,10 @@ class AnalysisService:
                     feature_id = str(uuid.uuid4())
                     await conn.execute("""
                         INSERT INTO features (
-                            id, segment_id, feature_type, feature_domain,
+                            id, asset_id, segment_id, feature_type, feature_domain,
                             confidence_score, feature_data, metadata
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """, feature_id, feature.get('segment_id'), feature['type'],
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """, feature_id, asset_id, feature.get('segment_id'), feature['type'],
                     feature.get('domain', 'general'), feature.get('confidence', 0.0),
                     json.dumps(feature.get('data', {})), json.dumps(feature.get('metadata', {})))
                 

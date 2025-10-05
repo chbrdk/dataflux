@@ -1,12 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2013',
-    NEXT_PUBLIC_INGESTION_URL: process.env.NEXT_PUBLIC_INGESTION_URL || 'http://localhost:2013',
-    NEXT_PUBLIC_QUERY_URL: process.env.NEXT_PUBLIC_QUERY_URL || 'http://localhost:8003',
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://dataflux-ingestion:2013',
+    NEXT_PUBLIC_INGESTION_URL: process.env.NEXT_PUBLIC_INGESTION_URL || 'http://dataflux-ingestion:2013',
+    NEXT_PUBLIC_QUERY_URL: process.env.NEXT_PUBLIC_QUERY_URL || 'http://dataflux-query:8003',
   },
   async rewrites() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://host.docker.internal:2013';
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://dataflux-ingestion:2013';
     return [
       {
         source: '/api/v1/:path*',
@@ -19,7 +19,7 @@ const nextConfig = {
     ]
   },
   images: {
-    domains: ['localhost', 'dataflux.local'],
+    domains: ['localhost', 'dataflux.local', 'dataflux-ingestion', 'dataflux-analysis'],
   },
   
   // Webpack-Konfiguration für besseres Logging

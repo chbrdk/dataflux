@@ -502,6 +502,70 @@ async def trigger_reanalysis(
     
     return {"message": "Re-analysis triggered", "asset_id": asset_id}
 
+@app.get("/api/v1/assets/{asset_id}/features")
+async def get_asset_features(
+    asset_id: str,
+    feature_type: Optional[str] = None,
+    domain: Optional[str] = None,
+    db: asyncpg.Connection = Depends(get_db)
+):
+    """Get all features for an asset, optionally filtered by type or domain"""
+    
+    # Check if asset exists
+    asset = await db.fetchrow(
+        "SELECT id FROM assets WHERE id = $1",
+        asset_id
+    )
+    
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    # Build query with optional filters
+    where_clause = "WHERE f.asset_id = $1"
+    params = [asset_id]
+    param_count = 1
+    
+    if feature_type:
+        param_count += 1
+        where_clause += f" AND f.feature_type = ${param_count}"
+        params.append(feature_type)
+    
+    if domain:
+        param_count += 1
+        where_clause += f" AND f.feature_domain = ${param_count}"
+        params.append(domain)
+    
+    # Get features
+    features = await db.fetch(f"""
+        SELECT f.id, f.feature_type, f.feature_domain, f.confidence,
+               f.feature_data, f.created_at
+        FROM features f
+        {where_clause}
+        ORDER BY f.created_at DESC
+    """, *params)
+    
+    # Format response
+    formatted_features = []
+    for feature in features:
+        formatted_features.append({
+            "id": str(feature['id']),
+            "type": feature['feature_type'],
+            "domain": feature['feature_domain'],
+            "confidence": float(feature['confidence']),
+            "data": json.loads(feature['feature_data']) if feature['feature_data'] else {},
+            "created_at": feature['created_at']
+        })
+    
+    return {
+        "asset_id": asset_id,
+        "features": formatted_features,
+        "total": len(formatted_features),
+        "filters": {
+            "feature_type": feature_type,
+            "domain": domain
+        }
+    }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""

@@ -12,7 +12,9 @@ import {
   CheckCircle,
   AlertCircle,
   Clock,
-  Trash2
+  Trash2,
+  FolderOpen,
+  ArrowRight
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 
@@ -27,7 +29,8 @@ interface UploadFile {
 const Upload: React.FC = () => {
   const [files, setFiles] = useState<UploadFile[]>([])
   const [dragActive, setDragActive] = useState(false)
-  const { setUploadProgress } = useAppStore()
+  const [showAssetsButton, setShowAssetsButton] = useState(false)
+  const { setUploadProgress, setCurrentView } = useAppStore()
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -52,6 +55,10 @@ const Upload: React.FC = () => {
     },
     onSuccess: (data, file) => {
       toast.success(`${file.name} uploaded successfully`)
+      
+      // Show assets button after successful upload
+      setShowAssetsButton(true)
+      
       setFiles(prev => prev.map(f => 
         f.file === file 
           ? { ...f, status: 'completed', progress: 100 }
@@ -104,14 +111,18 @@ const Upload: React.FC = () => {
 
     // Simulate progress
     const progressInterval = setInterval(() => {
-      setFiles(prev => prev.map(f => {
-        if (f.id === file.id && f.status === 'uploading') {
-          const newProgress = Math.min(f.progress + 10, 90)
-          setUploadProgress(f.id, newProgress)
-          return { ...f, progress: newProgress }
+      setFiles(prev => {
+        const currentFile = prev.find(f => f.id === file.id)
+        if (currentFile && currentFile.status === 'uploading') {
+          const newProgress = Math.min(currentFile.progress + 10, 90)
+          // Update progress outside of render
+          setTimeout(() => setUploadProgress(file.id, newProgress), 0)
+          return prev.map(f => 
+            f.id === file.id ? { ...f, progress: newProgress } : f
+          )
         }
-        return f
-      }))
+        return prev
+      })
     }, 200)
 
     try {
@@ -320,6 +331,27 @@ const Upload: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Assets Button - Show after successful upload */}
+      {showAssetsButton && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
+          <div className="flex items-center justify-center space-x-2 mb-3">
+            <CheckCircle className="w-6 h-6 text-green-500" />
+            <h3 className="text-lg font-semibold text-green-900">Upload erfolgreich!</h3>
+          </div>
+          <p className="text-green-800 mb-4">
+            Das Medium wurde in die Analyse-Queue aufgenommen. Du kannst den Fortschritt unter "Assets" verfolgen.
+          </p>
+          <button
+            onClick={() => setCurrentView('assets')}
+            className="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+          >
+            <FolderOpen className="w-4 h-4 mr-2" />
+            Assets öffnen
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </button>
         </div>
       )}
 

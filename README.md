@@ -29,6 +29,9 @@ DataFlux besteht aus drei Hauptkomponenten:
   - Bulk Operations
   - Foreign Key Constraint Management
   - Umfassendes Logging mit Emoji-Status-Indikatoren
+  - **Personen-API-Endpoints**:
+    - `GET /api/v1/persons` - Alle erkannten Personen mit Avatars
+    - `GET /api/v1/persons/{face_id}/images` - Alle Bilder einer Person
 
 ### 2. Analysis Service (Port 2014)
 - **Zweck**: KI-gestützte Analyse von Medieninhalten
@@ -61,8 +64,14 @@ DataFlux besteht aus drei Hauptkomponenten:
     - Manipulations-Indikatoren
     - Authentizitäts-Score
   - **Erweiterte Features**:
-    - Objekterkennung mit YOLO
-    - Gesichtserkennung mit DeepFace
+    - **Optimierte Objekterkennung mit YOLOv8n**: Fokussiert auf Objekte (Personen werden ignoriert)
+    - **FaceNet-Gesichtserkennung**: Hochpräzise Gesichtserkennung und -identifikation
+      - Eindeutige Face IDs mit persistenter Datenbank
+      - Avatar-Erstellung aus erkannten Gesichtern (128x128px)
+      - Erkennungsstatistiken (Auftrittsanzahl, erste/letzte Sichtung)
+      - Face Quality Assessment (Größe, Winkel, Beleuchtung)
+      - 512-dimensionale Face Embeddings für Vergleich
+    - **DeepFace-Demographics**: Alters-, Geschlechts-, Rassen- und Emotionsanalyse
     - OCR-Text-Erkennung
     - Farbanalyse und Histogramme
     - Kompositionsanalyse (Rule of Thirds, Symmetrie)
@@ -86,15 +95,42 @@ DataFlux besteht aus drei Hauptkomponenten:
     - Einsatz hochauflösender Large-Thumbnails (1200×800px)
     - Intelligente Fallback-Mechanismen bei Bilder-Fehlern
   - **Klickbare Thumbnails**: Direkter Zugriff auf Analyse-Modal
-  - **7 AI-Features automatisch verfügbar**:
+  - **8 AI-Features automatisch verfügbar**:
     - Technical Properties (Dimensionen, Format, Megapixel)
     - Technical Extended (Aspect Ratio, Helligkeit, Kontrast)
     - EXIF Comprehensive (Kamera-Info, GPS, Belichtung)
     - Image Quality (Blur-Score, Noise, Signal-to-Noise Ratio)
     - Composition (Symmetrie, Rule of Thirds)
-    - Object Detection (YOLOv8n)
-    - Face Analysis (DeepFace - Alter, Emotion, Geschlecht)
+    - Object Detection (YOLOv8n - Objekte ohne Personen)
+    - Face Demographics (DeepFace - Alter, Emotion, Geschlecht, Rasse)
+    - Face Recognition (FaceNet - Personenerkennung mit Avatars)
   - Responsive Design mit Tailwind CSS
+
+#### Personen-Management
+  - **Personen-Seite**: Dedizierte Übersicht aller erkannten Personen
+    - Avatar-Cards mit Gesichtsbildern (128x128px)
+    - Personenerkennungsstatistiken (Auftrittsanzahl, Confidence)
+    - Zeitstempel (erste/letzte Sichtung)
+    - Sortierung nach Häufigkeit der Auftritte
+  - **Person-Detailansicht**: 
+    - Klickbare Avatar-Cards öffnen Person-Detailansicht
+    - Anzeige aller Bilder, in denen die Person auftaucht
+    - Bild-Metadaten (Qualität, Confidence, Upload-Datum)
+    - Zurück-Navigation zur Personen-Übersicht
+  - **Face Database System**:
+    - Persistente Speicherung von Face IDs und Embeddings
+    - Automatische Erkennung von bekannten vs. neuen Gesichtern
+    - Face Quality Assessment für Erkennungsgenauigkeit
+
+#### Navigation
+  - **Sidebar-Navigation**: Linksseitige Navigation mit allen Hauptfunktionen
+    - Dashboard (Übersicht)
+    - Upload (Dateien hochladen)
+    - Search (Suche)
+    - Assets (Asset-Management)
+    - Analytics (Statistiken)
+    - **Personen** (Personen-Management) - Neu!
+  - **Responsive Design**: Funktioniert auf Desktop, Tablet und Mobile
 
 ## 🚀 Installation und Setup
 
@@ -104,26 +140,53 @@ DataFlux besteht aus drei Hauptkomponenten:
 - PostgreSQL (Port 2001)
 - Redis (Port 7003)
 
-### Services starten
+### Lokale Ausführung (Empfohlen für Mac Mini M4)
 
-#### 1. Ingestion Service
+#### Schnellstart
+```bash
+# Docker Container starten (PostgreSQL + Redis)
+cd /Users/m4mini/Desktop/DOCKER-local/DATAFLUX
+docker-compose -f docker-compose.services.yml up -d dataflux-postgres dataflux-redis
+
+# Alle Services lokal starten
+./start-local.sh
+```
+
+#### Einzelne Services starten
+
+#### 1. Ingestion Service (Port 2013)
 ```bash
 cd services/ingestion-service
+DATABASE_URL="postgresql://dataflux_user:secure_password_here@localhost:2001/dataflux" \
+REDIS_URL="redis://:secure_redis_password_here@localhost:2002" \
 python3 src/main_simple.py
 ```
 
-#### 2. Analysis Service
+#### 2. Analysis Service (Port 8004)
 ```bash
 cd services/analysis-service
-python3 -m uvicorn src.main_simple:app --host 0.0.0.0 --port 2014 --reload
+PYTORCH_ENABLE_MPS_FALLBACK=1 \
+DATABASE_URL="postgresql://dataflux_user:secure_password_here@localhost:2001/dataflux" \
+REDIS_URL="redis://:secure_redis_password_here@localhost:2002" \
+INGESTION_SERVICE_URL="http://localhost:2013" \
+python3 src/api_processor.py
 ```
 
-#### 3. Web UI
+#### 3. Query Service (Port 8003)
+```bash
+cd services/query-service
+go run cmd/main_simple.go
+```
+
+#### 4. Web UI (Port 3000)
 ```bash
 cd services/web-ui
-npm install
-npm run build
-npm start
+npm run dev
+```
+
+#### Services stoppen
+```bash
+./stop-local.sh
 ```
 
 ## 📊 API Endpoints
@@ -148,6 +211,10 @@ npm start
 #### Bulk Operations
 - `POST /api/v1/assets/bulk-delete` - Mehrere Assets löschen
 
+#### Personen-Management
+- `GET /api/v1/persons` - Alle erkannten Personen mit Avatars abrufen
+- `GET /api/v1/persons/{face_id}/images` - Alle Bilder einer Person abrufen
+
 #### Health Check
 - `GET /health` - Service-Status prüfen
 
@@ -156,6 +223,11 @@ npm start
 #### Analyse
 - `POST /api/v1/analyze/image` - Bild analysieren
 - `GET /health` - Service-Status prüfen
+
+#### Face Database
+- Face Database wird automatisch in `/tmp/dataflux_face_database.json` gespeichert
+- Avatar-Bilder werden in `/tmp/dataflux_avatars/` gespeichert
+- Persistente Face IDs mit Embeddings für Wiedererkennung
 
 ## 🔍 Umfassende Bildanalyse
 
