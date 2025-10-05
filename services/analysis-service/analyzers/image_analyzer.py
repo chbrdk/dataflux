@@ -81,7 +81,11 @@ try:
     from .scene_classifier import SceneClassifier
     SCENE_CLASSIFIER_AVAILABLE = True
 except ImportError:
-    SCENE_CLASSIFIER_AVAILABLE = False
+    try:
+        from scene_classifier import SceneClassifier
+        SCENE_CLASSIFIER_AVAILABLE = True
+    except ImportError:
+        SCENE_CLASSIFIER_AVAILABLE = False
 
 try:
     from .base import BaseAnalyzer

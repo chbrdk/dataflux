@@ -15,6 +15,14 @@ import colorsys
 from collections import Counter
 import math
 
+# Scene Classification imports
+try:
+    from .scene_classifier import SceneClassifier
+    SCENE_CLASSIFIER_AVAILABLE = True
+except ImportError:
+    SCENE_CLASSIFIER_AVAILABLE = False
+    SceneClassifier = None
+
 logger = logging.getLogger(__name__)
 
 class ImageAnalyzer:
@@ -22,7 +30,9 @@ class ImageAnalyzer:
     
     def __init__(self):
         self.yolo_model = None
+        self.scene_classifier = None  # Scene classification
         self._initialize_models()
+        self._init_scene_classifier()
     
     def _initialize_models(self):
         """Initialisiere ML-Modelle"""
@@ -33,6 +43,19 @@ class ImageAnalyzer:
         except Exception as e:
             logger.warning(f"⚠️ Could not load YOLO model: {e}")
             self.yolo_model = None
+    
+    def _init_scene_classifier(self):
+        """Initialisiere Scene Classifier"""
+        if SCENE_CLASSIFIER_AVAILABLE:
+            try:
+                self.scene_classifier = SceneClassifier()
+                logger.info("✅ Scene classifier initialized successfully")
+            except Exception as e:
+                logger.warning(f"⚠️ Scene classifier not available: {e}")
+                self.scene_classifier = None
+        else:
+            logger.warning("⚠️ Scene classifier not available")
+            self.scene_classifier = None
     
     async def analyze(self, image_path: str, asset: Dict) -> Dict:
         """Führe umfassende Bildanalyse durch"""
@@ -75,11 +98,27 @@ class ImageAnalyzer:
             composition_features = await self._analyze_composition(image)
             results['features'].extend(composition_features)
             
-            # 6. Texturanalyse
+            # 6. Scene Classification
+            if SCENE_CLASSIFIER_AVAILABLE and self.scene_classifier:
+                try:
+                    scene_results = await self.scene_classifier.classify_scene(image_path)
+                    if scene_results:
+                        results['features'].append({
+                            'type': 'scene_classification',
+                            'domain': 'semantic',
+                            'confidence': scene_results.get('primary_scene', {}).get('confidence', 0.0),
+                            'data': scene_results,
+                            'metadata': {'analyzer': 'clip_scene_classifier'}
+                        })
+                        logger.info("✅ Scene classification completed")
+                except Exception as e:
+                    logger.warning(f"⚠️ Scene classification failed: {e}")
+            
+            # 7. Texturanalyse
             texture_features = await self._analyze_texture(image)
             results['features'].extend(texture_features)
             
-            # 7. Helligkeits- und Kontrastanalyse
+            # 8. Helligkeits- und Kontrastanalyse
             brightness_features = await self._analyze_brightness_contrast(image)
             results['features'].extend(brightness_features)
             
