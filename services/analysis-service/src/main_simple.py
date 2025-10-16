@@ -21,12 +21,22 @@ import uvicorn
 
 # Add analyzers to path
 sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append('/app/analyzers')
+sys.path.append('/Users/m4mini/Desktop/DOCKER-local/DATAFLUX/services/analysis-service')
 
 try:
     from analyzers.image_analyzer import ImageAnalyzer
     IMAGE_ANALYZER_AVAILABLE = True
 except ImportError:
     IMAGE_ANALYZER_AVAILABLE = False
+
+try:
+    from analyzers.docling_analyzer import DoclingAnalyzer
+    DOCLING_ANALYZER_AVAILABLE = True
+    print("✅ DoclingAnalyzer import erfolgreich!")
+except ImportError as e:
+    DOCLING_ANALYZER_AVAILABLE = False
+    print(f"❌ DoclingAnalyzer import fehlgeschlagen: {e}")
 
 # Simple logging setup
 logging.basicConfig(level=logging.INFO)
@@ -48,8 +58,10 @@ app.add_middleware(
 class AnalyzeRequest(BaseModel):
     file_path: str
 
-# Initialize image analyzer
+# Initialize analyzers
 image_analyzer = None
+docling_analyzer = None
+
 if IMAGE_ANALYZER_AVAILABLE:
     try:
         image_analyzer = ImageAnalyzer()
@@ -58,6 +70,14 @@ if IMAGE_ANALYZER_AVAILABLE:
         logger.error(f"Failed to initialize image analyzer: {e}")
         image_analyzer = None
 
+if DOCLING_ANALYZER_AVAILABLE:
+    try:
+        docling_analyzer = DoclingAnalyzer()
+        logger.info("Docling analyzer initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Docling analyzer: {e}")
+        docling_analyzer = None
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -65,7 +85,8 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "services": {
-            "image_analyzer": "available" if image_analyzer else "unavailable"
+            "image_analyzer": "available" if image_analyzer else "unavailable",
+            "docling_analyzer": "available" if docling_analyzer else "unavailable"
         }
     }
 
@@ -92,6 +113,35 @@ async def analyze_image(request: AnalyzeRequest):
         
     except Exception as e:
         logger.error(f"Image analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/analyze/document")
+async def analyze_document(request: AnalyzeRequest):
+    """Analyze a document file using Docling"""
+    try:
+        if not docling_analyzer:
+            raise HTTPException(status_code=503, detail="Docling analyzer not available")
+        
+        if not os.path.exists(request.file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Analyze the document
+        asset_data = {
+            "id": str(uuid.uuid4()),
+            "filename": os.path.basename(request.file_path),
+            "mime_type": "text/html"  # Default, could be detected
+        }
+        result = await docling_analyzer.analyze(request.file_path, asset_data)
+        
+        return {
+            "status": "success",
+            "file_path": request.file_path,
+            "analysis": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Document analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

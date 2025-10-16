@@ -16,12 +16,12 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 import asyncpg
-import aiokafka
-from aiokafka import AIOKafkaConsumer
-from minio import Minio
-import structlog
-from prometheus_client import Counter, Histogram, Gauge, start_http_server
-import httpx
+# import aiokafka
+# from aiokafka import AIOKafkaConsumer
+# from minio import Minio
+# import structlog
+# from prometheus_client import Counter, Histogram, Gauge, start_http_server
+# import httpx
 
 # Add analyzers to path
 import sys
@@ -29,7 +29,28 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from analyzers.base import BaseAnalyzer
-from analyzers.video_analyzer import VideoAnalyzer
+
+# Clear module cache to force fresh import
+modules_to_clear = [k for k in sys.modules.keys() if k.startswith('analyzers')]
+for module in modules_to_clear:
+    del sys.modules[module]
+
+try:
+    from analyzers.video_analyzer_factory import enhanced_video_analyzer
+    VIDEO_ANALYZER_AVAILABLE = True
+    print(f"🎬 Using {type(enhanced_video_analyzer).__name__}")
+except ImportError as e:
+    print(f"❌ Factory import failed: {e}")
+    try:
+        from analyzers.video_analyzer import VideoAnalyzer, EnhancedVideoAnalyzer
+        enhanced_video_analyzer = EnhancedVideoAnalyzer() if EnhancedVideoAnalyzer else VideoAnalyzer()
+        VIDEO_ANALYZER_AVAILABLE = True
+        print(f"🎬 Fallback to {type(enhanced_video_analyzer).__name__}")
+    except ImportError:
+        from analyzers.video_analyzer import VideoAnalyzer
+        enhanced_video_analyzer = VideoAnalyzer()
+        VIDEO_ANALYZER_AVAILABLE = True
+        print(f"🎬 Fallback to {type(enhanced_video_analyzer).__name__}")
 from analyzers.image_analyzer import ImageAnalyzer
 from analyzers.audio_analyzer import AudioAnalyzer
 from analyzers.document_analyzer import DocumentAnalyzer
@@ -47,40 +68,41 @@ NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "dataflux_pass")
 
 # Metrics
-PROCESSED_ASSETS = Counter('dataflux_processed_assets_total', 'Total processed assets', ['analyzer_type', 'status'])
-PROCESSING_TIME = Histogram('dataflux_processing_duration_seconds', 'Processing time per asset', ['analyzer_type'])
-QUEUE_SIZE = Gauge('dataflux_queue_size', 'Current queue size')
-ACTIVE_WORKERS = Gauge('dataflux_active_workers', 'Number of active workers')
+# PROCESSED_ASSETS = Counter('dataflux_processed_assets_total', 'Total processed assets', ['analyzer_type', 'status'])
+# PROCESSING_TIME = Histogram('dataflux_processing_duration_seconds', 'Processing time per asset', ['analyzer_type'])
+# QUEUE_SIZE = Gauge('dataflux_queue_size', 'Current queue size')
+# ACTIVE_WORKERS = Gauge('dataflux_active_workers', 'Number of active workers')
 
 # Logging setup
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
+# structlog.configure(
+#     processors=[
+#         structlog.stdlib.filter_by_level,
+#         structlog.stdlib.add_logger_name,
+#         structlog.stdlib.add_log_level,
+#         structlog.stdlib.PositionalArgumentsFormatter(),
+#         structlog.processors.TimeStamper(fmt="iso"),
+#         structlog.processors.StackInfoRenderer(),
+#         structlog.processors.format_exc_info,
+#         structlog.processors.UnicodeDecoder(),
+#         structlog.processors.JSONRenderer()
+#     ],
+#     context_class=dict,
+#     logger_factory=structlog.stdlib.LoggerFactory(),
+#     wrapper_class=structlog.stdlib.BoundLogger,
+#     cache_logger_on_first_use=True,
+# )
 
-logger = structlog.get_logger()
+# logger = structlog.get_logger()
+logger = logging.getLogger(__name__)
 
 class AnalysisService:
     """Main analysis service with Kafka consumer and plugin architecture"""
     
     def __init__(self):
         self.db_pool = None
-        self.kafka_consumer = None
-        self.minio_client = None
-        self.http_client = None
+        # self.kafka_consumer = None
+        # self.minio_client = None
+        # self.http_client = None
         self.analyzers: Dict[str, BaseAnalyzer] = {}
         self.running = False
         
@@ -90,30 +112,54 @@ class AnalysisService:
     def _init_analyzers(self):
         """Initialize all available analyzers"""
         try:
-            self.analyzers = {
-                'video': VideoAnalyzer(),
-                'image': ImageAnalyzer(),
-                'audio': AudioAnalyzer(),
-                'document': DocumentAnalyzer(),
-            }
+            # Import DoclingAnalyzer
+            from analyzers.docling_analyzer import DoclingAnalyzer
+            
+            if VIDEO_ANALYZER_AVAILABLE:
+                self.analyzers = {
+                    'video': enhanced_video_analyzer,
+                    'image': ImageAnalyzer(),
+                    'audio': AudioAnalyzer(),
+                    'document': DocumentAnalyzer(),
+                    'docling': DoclingAnalyzer(),
+                }
+            else:
+                self.analyzers = {
+                    'image': ImageAnalyzer(),
+                    'audio': AudioAnalyzer(),
+                    'document': DocumentAnalyzer(),
+                    'docling': DoclingAnalyzer(),
+                }
             logger.info("Analyzers initialized", analyzers=list(self.analyzers.keys()))
         except Exception as e:
             logger.error("Failed to initialize analyzers", error=str(e))
-            raise
+            # Fallback to basic analyzers if enhanced fails
+            try:
+                self.analyzers = {
+                    'video': VideoAnalyzer(),
+                    'image': ImageAnalyzer(),
+                    'audio': AudioAnalyzer(),
+                    'document': DocumentAnalyzer(),
+                    'docling': DoclingAnalyzer(),
+                }
+                logger.warning("Using fallback analyzers", analyzers=list(self.analyzers.keys()))
+            except Exception as fallback_error:
+                logger.error("Failed to initialize fallback analyzers", error=str(fallback_error))
+                raise
     
     async def start(self):
         """Start the analysis service"""
         logger.info("Starting DataFlux Analysis Service")
         
         # Start metrics server
-        start_http_server(8004)
-        logger.info("Metrics server started on port 8004")
+        # start_http_server(8004)
+        # logger.info("Metrics server started on port 8004")
         
         # Initialize connections
         await self._init_connections()
         
         # Start Kafka consumer
-        await self._start_kafka_consumer()
+        # await self._start_kafka_consumer()
         
         self.running = True
         logger.info("Analysis service started successfully")
@@ -132,14 +178,14 @@ class AnalysisService:
         logger.info("Stopping analysis service")
         self.running = False
         
-        if self.kafka_consumer:
-            await self.kafka_consumer.stop()
+        # if self.kafka_consumer:
+        #     await self.kafka_consumer.stop()
         
         if self.db_pool:
             await self.db_pool.close()
         
-        if self.http_client:
-            await self.http_client.aclose()
+        # if self.http_client:
+        #     await self.http_client.aclose()
         
         logger.info("Analysis service stopped")
     
@@ -155,53 +201,53 @@ class AnalysisService:
             logger.info("Database connection established")
             
             # MinIO client
-            self.minio_client = Minio(
-                MINIO_ENDPOINT,
-                access_key=MINIO_ACCESS_KEY,
-                secret_key=MINIO_SECRET_KEY,
-                secure=False
-            )
-            logger.info("MinIO client initialized")
+            # self.minio_client = Minio(
+            #     MINIO_ENDPOINT,
+            #     access_key=MINIO_ACCESS_KEY,
+            #     secret_key=MINIO_SECRET_KEY,
+            #     secure=False
+            # )
+            # logger.info("MinIO client initialized")
             
             # HTTP client
-            self.http_client = httpx.AsyncClient(timeout=30.0)
-            logger.info("HTTP client initialized")
+            # self.http_client = httpx.AsyncClient(timeout=30.0)
+            # logger.info("HTTP client initialized")
             
         except Exception as e:
             logger.error("Failed to initialize connections", error=str(e))
             raise
     
-    async def _start_kafka_consumer(self):
-        """Start Kafka consumer for asset processing"""
-        try:
-            self.kafka_consumer = AIOKafkaConsumer(
-                'asset-processing',
-                bootstrap_servers=KAFKA_BROKERS,
-                group_id='analysis-service',
-                auto_offset_reset='latest',
-                enable_auto_commit=True,
-                value_deserializer=lambda m: json.loads(m.decode('utf-8'))
-            )
-            
-            await self.kafka_consumer.start()
-            logger.info("Kafka consumer started")
-            
-            # Start processing loop
-            asyncio.create_task(self._process_messages())
-            
-        except Exception as e:
-            logger.error("Failed to start Kafka consumer", error=str(e))
-            raise
+    # async def _start_kafka_consumer(self):
+    #     """Start Kafka consumer for asset processing"""
+    #     try:
+    #         self.kafka_consumer = AIOKafkaConsumer(
+    #             'asset-processing',
+    #             bootstrap_servers=KAFKA_BROKERS,
+    #             group_id='analysis-service',
+    #             auto_offset_reset='latest',
+    #             enable_auto_commit=True,
+    #             value_deserializer=lambda m: json.loads(m.decode('utf-8'))
+    #         )
+    #         
+    #         await self.kafka_consumer.start()
+    #         logger.info("Kafka consumer started")
+    #         
+    #         # Start processing loop
+    #         asyncio.create_task(self._process_messages())
+    #         
+    #     except Exception as e:
+    #         logger.error("Failed to start Kafka consumer", error=str(e))
+    #         raise
     
-    async def _process_messages(self):
-        """Process messages from Kafka"""
-        logger.info("Starting message processing loop")
-        
-        async for message in self.kafka_consumer:
-            try:
-                await self._process_asset(message.value)
-            except Exception as e:
-                logger.error("Failed to process message", error=str(e), message=message.value)
+    # async def _process_messages(self):
+    #     """Process messages from Kafka"""
+    #     logger.info("Starting message processing loop")
+    #     
+    #     async for message in self.kafka_consumer:
+    #         try:
+    #             await self._process_asset(message.value)
+    #         except Exception as e:
+    #             logger.error("Failed to process message", error=str(e), message=message.value)
     
     async def _process_asset(self, message: Dict[str, Any]):
         """Process a single asset"""
@@ -270,7 +316,7 @@ class AnalysisService:
                 
         except Exception as e:
             logger.error("Failed to process asset", asset_id=asset_id, error=str(e))
-            PROCESSED_ASSETS.labels(analyzer_type=analyzer_type, status='failed').inc()
+            # PROCESSED_ASSETS.labels(analyzer_type=analyzer_type, status='failed').inc()
             await self._update_processing_status(asset_id, 'failed', error=str(e))
     
     def _get_analyzer_type(self, mime_type: str) -> str:
@@ -281,8 +327,16 @@ class AnalysisService:
             return 'image'
         elif mime_type.startswith('audio/'):
             return 'audio'
-        elif mime_type.startswith('application/pdf') or mime_type.startswith('text/'):
-            return 'document'
+        elif mime_type.startswith('application/pdf'):
+            return 'docling'  # Use Docling for PDFs
+        elif mime_type.startswith('application/vnd.openxmlformats-officedocument'):
+            return 'docling'  # Use Docling for Office documents (DOCX, PPTX, XLSX)
+        elif mime_type.startswith('application/vnd.ms-'):
+            return 'docling'  # Use Docling for legacy Office documents
+        elif mime_type.startswith('text/html'):
+            return 'docling'  # Use Docling for HTML documents
+        elif mime_type.startswith('text/'):
+            return 'document'  # Use basic document analyzer for plain text
         else:
             return 'document'  # Default fallback
     

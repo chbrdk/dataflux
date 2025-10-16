@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Brain, Clock, CheckCircle, AlertCircle, XCircle, BarChart3, Target, Info, ChevronDown, ChevronUp, X, User, Users, Eye, Zap, Loader, Database, Settings, Image, Tag } from 'lucide-react'
+import { Brain, Clock, CheckCircle, AlertCircle, XCircle, BarChart3, Target, Info, ChevronDown, ChevronUp, X, User, Users, Eye, Zap, Loader, Database, Settings, Image, Tag, Sparkles, Palette, Camera, Text, Globe, Heart, Wrench, Search } from 'lucide-react'
 
 interface Feature {
   id: string
@@ -10,6 +10,25 @@ interface Feature {
   data: Record<string, any>
   analyzer_version?: string
   created_at?: string
+}
+
+interface AnalysisData {
+  asset_id: string
+  filename: string
+  mime_type: string
+  file_size: number
+  processing_status: string
+  created_at: string
+  features: Feature[]
+  summary: {
+    total_features: number
+    processing_time: number | null
+  }
+  dimensions?: {
+    width: number
+    height: number
+  }
+  file_path?: string
 }
 
 interface AnalysisResultsProps {
@@ -35,6 +54,202 @@ const getStatusIcon = (status: string) => {
 const formatConfidence = (confidence: number) => {
   return `${Math.round(confidence * 100)}% conf`
 }
+
+const getFeatureIcon = (featureType: string) => {
+  switch (featureType) {
+    case 'claude_vision_analysis':
+      return <Sparkles className="w-5 h-5 text-purple-600" />
+    case 'scene_classification':
+      return <Camera className="w-5 h-5 text-blue-600" />
+    case 'faces':
+      return <Users className="w-5 h-5 text-green-600" />
+    case 'object_detection':
+      return <Target className="w-5 h-5 text-orange-600" />
+    case 'image_quality':
+      return <Eye className="w-5 h-5 text-indigo-600" />
+    case 'composition':
+      return <BarChart3 className="w-5 h-5 text-pink-600" />
+    case 'technical_properties':
+      return <Wrench className="w-5 h-5 text-gray-600" />
+    case 'exif_comprehensive':
+      return <Database className="w-5 h-5 text-gray-600" />
+    default:
+      return <Brain className="w-5 h-5 text-gray-600" />
+  }
+}
+
+const parseClaudeVisionData = (feature: Feature) => {
+  try {
+    if (feature.data.analysis && feature.data.analysis.analysis) {
+      // Remove markdown code blocks if present
+      const jsonStr = feature.data.analysis.analysis
+        .replace(/```json\n/g, '')
+        .replace(/```\n/g, '')
+        .replace(/```/g, '');
+      return JSON.parse(jsonStr);
+    }
+  } catch (e) {
+    console.error('Failed to parse Claude Vision analysis:', e);
+  }
+  return null;
+}
+
+const ClaudeVisionAnalysisDisplay: React.FC<{ feature: Feature }> = ({ feature }) => {
+  const analysisData = parseClaudeVisionData(feature);
+  if (!analysisData) return <div className="text-gray-500">No analysis data available</div>;
+  
+  return (
+    <div className="space-y-4">
+      {analysisData.hauptinhalt && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+          <div className="flex items-center space-x-2 mb-2">
+            <Sparkles className="w-4 h-4 text-purple-600" />
+            <span className="font-medium text-purple-900">Hauptinhalt</span>
+          </div>
+          <div className="text-sm text-purple-700">
+            {analysisData.hauptinhalt}
+          </div>
+        </div>
+      )}
+      
+      {analysisData.szenenbeschreibung && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="flex items-center space-x-2 mb-2">
+            <Camera className="w-4 h-4 text-blue-600" />
+            <span className="font-medium text-blue-900">Szenenbeschreibung</span>
+          </div>
+          <div className="text-sm text-blue-700">
+            {analysisData.szenenbeschreibung}
+          </div>
+        </div>
+      )}
+      
+      {analysisData.stimmung && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+          <div className="flex items-center space-x-2 mb-2">
+            <Heart className="w-4 h-4 text-yellow-600" />
+            <span className="font-medium text-yellow-900">Stimmung</span>
+          </div>
+          <div className="text-sm text-yellow-700">
+            {analysisData.stimmung}
+          </div>
+        </div>
+      )}
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {analysisData.objekte && Array.isArray(analysisData.objekte) && analysisData.objekte.length > 0 && (
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Target className="w-4 h-4 text-orange-600" />
+              <span className="font-medium text-orange-900">Objekte ({analysisData.objekte.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {analysisData.objekte.map((obj: string, index: number) => (
+                <span 
+                  key={index}
+                  className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full"
+                >
+                  {obj}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {analysisData.personen && typeof analysisData.personen === 'string' && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Users className="w-4 h-4 text-green-600" />
+              <span className="font-medium text-green-900">Personen</span>
+            </div>
+            <div className="text-sm text-green-700">
+              {analysisData.personen}
+            </div>
+          </div>
+        )}
+        
+        {analysisData.farben && analysisData.farben.hauptfarben && Array.isArray(analysisData.farben.hauptfarben) && (
+          <div className="bg-pink-50 border border-pink-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Palette className="w-4 h-4 text-pink-600" />
+              <span className="font-medium text-pink-900">Farben ({analysisData.farben.hauptfarben.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {analysisData.farben.hauptfarben.map((color: string, index: number) => (
+                <span 
+                  key={index}
+                  className="px-2 py-1 bg-pink-100 text-pink-800 text-xs rounded-full"
+                >
+                  {color}
+                </span>
+              ))}
+            </div>
+            {analysisData.farben.farbharmonie && (
+              <div className="text-xs text-pink-600 mt-2">
+                {analysisData.farben.farbharmonie}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {analysisData.tags && Array.isArray(analysisData.tags) && analysisData.tags.length > 0 && (
+          <div className="bg-teal-50 border border-teal-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Tag className="w-4 h-4 text-teal-600" />
+              <span className="font-medium text-teal-900">Tags ({analysisData.tags.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {analysisData.tags.map((tag: string, index: number) => (
+                <span 
+                  key={index}
+                  className="px-2 py-1 bg-teal-100 text-teal-800 text-xs rounded-full"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {analysisData.komposition && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+          <div className="flex items-center space-x-2 mb-2">
+            <BarChart3 className="w-4 h-4 text-indigo-600" />
+            <span className="font-medium text-indigo-900">Komposition</span>
+          </div>
+          <div className="text-sm text-indigo-700">
+            {typeof analysisData.komposition === 'string' ? analysisData.komposition : JSON.stringify(analysisData.komposition)}
+          </div>
+        </div>
+      )}
+      
+      {analysisData.technische_aspekte && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+          <div className="flex items-center space-x-2 mb-2">
+            <Wrench className="w-4 h-4 text-gray-600" />
+            <span className="font-medium text-gray-900">Technische Aspekte</span>
+          </div>
+          <div className="text-sm text-gray-700">
+            {typeof analysisData.technische_aspekte === 'string' ? analysisData.technische_aspekte : JSON.stringify(analysisData.technische_aspekte)}
+          </div>
+        </div>
+      )}
+      
+      {analysisData.text && analysisData.text !== "Kein Text im Bild vorhanden" && (
+        <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3">
+          <div className="flex items-center space-x-2 mb-2">
+            <Text className="w-4 h-4 text-cyan-600" />
+            <span className="font-medium text-cyan-900">Erkannter Text</span>
+          </div>
+          <div className="text-sm text-cyan-700">
+            {analysisData.text}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const FeatureDataTableGlassmorphism: React.FC<{ data: Record<string, any> }> = ({ data }) => {
   const renderValue = (value: any, depth = 0): React.ReactNode => {
@@ -358,6 +573,179 @@ const FeatureAccordion: React.FC<{ feature: Feature }> = ({ feature }) => {
     }
 
     if (typeof value === 'object') {
+      // Special handling for Claude Vision Analysis
+      if (key === 'hauptinhalt' && typeof value === 'string') {
+        return (
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Sparkles className="w-4 h-4 text-purple-600" />
+              <span className="font-medium text-purple-900">Hauptinhalt</span>
+            </div>
+            <div className="text-sm text-purple-700">
+              {value}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'szenenbeschreibung' && typeof value === 'string') {
+        return (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Camera className="w-4 h-4 text-blue-600" />
+              <span className="font-medium text-blue-900">Szenenbeschreibung</span>
+            </div>
+            <div className="text-sm text-blue-700">
+              {value}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'objekte' && Array.isArray(value)) {
+        return (
+          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Target className="w-4 h-4 text-orange-600" />
+              <span className="font-medium text-orange-900">Objekte ({value.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {value.map((obj: string, index: number) => (
+                <span 
+                  key={index}
+                  className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full"
+                >
+                  {obj}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'personen' && Array.isArray(value)) {
+        return (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Users className="w-4 h-4 text-green-600" />
+              <span className="font-medium text-green-900">Personen ({value.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {value.map((person: string, index: number) => (
+                <span 
+                  key={index}
+                  className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full"
+                >
+                  {person}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'farben' && Array.isArray(value)) {
+        return (
+          <div className="bg-pink-50 border border-pink-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Palette className="w-4 h-4 text-pink-600" />
+              <span className="font-medium text-pink-900">Farben ({value.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {value.map((color: string, index: number) => (
+                <span 
+                  key={index}
+                  className="px-2 py-1 bg-pink-100 text-pink-800 text-xs rounded-full"
+                >
+                  {color}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'komposition' && typeof value === 'string') {
+        return (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <BarChart3 className="w-4 h-4 text-indigo-600" />
+              <span className="font-medium text-indigo-900">Komposition</span>
+            </div>
+            <div className="text-sm text-indigo-700">
+              {value}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'stimmung' && typeof value === 'string') {
+        return (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Heart className="w-4 h-4 text-yellow-600" />
+              <span className="font-medium text-yellow-900">Stimmung</span>
+            </div>
+            <div className="text-sm text-yellow-700">
+              {value}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'technische_aspekte' && typeof value === 'string') {
+        return (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Wrench className="w-4 h-4 text-gray-600" />
+              <span className="font-medium text-gray-900">Technische Aspekte</span>
+            </div>
+            <div className="text-sm text-gray-700">
+              {value}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'text' && Array.isArray(value)) {
+        return (
+          <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Text className="w-4 h-4 text-cyan-600" />
+              <span className="font-medium text-cyan-900">Erkannter Text ({value.length})</span>
+            </div>
+            <div className="space-y-1">
+              {value.map((text: string, index: number) => (
+                <div key={index} className="text-sm text-cyan-700 bg-white rounded p-2 border">
+                  "{text}"
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      }
+      
+      if (key === 'tags' && Array.isArray(value)) {
+        return (
+          <div className="bg-teal-50 border border-teal-200 rounded-lg p-3">
+            <div className="flex items-center space-x-2 mb-2">
+              <Tag className="w-4 h-4 text-teal-600" />
+              <span className="font-medium text-teal-900">Tags ({value.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {value.map((tag: string, index: number) => (
+                <span 
+                  key={index}
+                  className="px-2 py-1 bg-teal-100 text-teal-800 text-xs rounded-full"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      }
+      
       // Special handling for Scene Classification
       if (key === 'primary_scene' && value.scene && value.confidence !== undefined) {
         return (
@@ -564,10 +952,7 @@ const FeatureAccordion: React.FC<{ feature: Feature }> = ({ feature }) => {
         className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
       >
         <div className="flex items-center space-x-3">
-          <div className={`w-2 h-2 rounded-full ${
-            feature.confidence >= 0.9 ? 'bg-green-500' : 
-            feature.confidence >= 0.7 ? 'bg-yellow-500' : 'bg-gray-400'
-          }`} />
+          {getFeatureIcon(feature.type)}
           <div className="text-left">
             <h4 className="font-semibold text-gray-900">{formatKey(feature.type)}</h4>
             <p className="text-xs text-gray-500">{Math.round(feature.confidence * 100)}% Confidence • {feature.domain}</p>
@@ -600,7 +985,7 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ assetId, onClose }) =
   const [selectedTab, setSelectedTab] = useState<'features' | 'metadata' | 'summary'>('features')
 
   // Fetch analysis data from API - use the new features endpoint
-  const { data: analysisData, isLoading, error } = useQuery({
+  const { data: analysisData, isLoading, error } = useQuery<AnalysisData>({
     queryKey: ['analysis', assetId],
     queryFn: async () => {
       // First get asset details
@@ -686,12 +1071,14 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ assetId, onClose }) =
                 <p className="text-blue-100">{analysisData.summary.total_features} Features • {analysisData.mime_type.split('/')[0]}</p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={onClose}
+                className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
           </div>
         </div>
         
@@ -844,6 +1231,43 @@ const AnalysisResults: React.FC<AnalysisResultsProps> = ({ assetId, onClose }) =
                                 <pre className="text-xs text-gray-600 overflow-x-auto">
                                   {JSON.stringify(feature.data, null, 2)}
                                 </pre>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Claude Vision Analysis Features */}
+                    {analysisData.features.some((f: Feature) => f.type === 'claude_vision_analysis') && (
+                      <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+                        <h4 className="font-semibold text-purple-900 mb-3 flex items-center">
+                          <Sparkles className="w-4 h-4 mr-2" />
+                          Claude Vision Analysis
+                        </h4>
+                        <div className="space-y-3">
+                          {analysisData.features
+                            .filter((f: Feature) => f.type === 'claude_vision_analysis')
+                            .map((feature: Feature) => (
+                              <div key={feature.id} className="bg-white rounded border p-3">
+                                <div className="flex items-center justify-between mb-4">
+                                  <div className="flex items-center space-x-2">
+                                    <Sparkles className="w-5 h-5 text-purple-600" />
+                                    <h5 className="font-medium text-gray-900">Claude Vision Analysis</h5>
+                                  </div>
+                                  <span className="text-xs text-gray-500">
+                                    Confidence: {Math.round((feature.confidence || 0) * 100)}%
+                                  </span>
+                                </div>
+                                
+                                <ClaudeVisionAnalysisDisplay feature={feature} />
+                                
+                                {/* Raw data */}
+                                <details className="mt-4">
+                                  <summary className="text-xs text-gray-500 cursor-pointer">Raw Data</summary>
+                                  <pre className="text-xs text-gray-600 mt-2 overflow-x-auto bg-gray-50 p-2 rounded">
+                                    {JSON.stringify(feature.data, null, 2)}
+                                  </pre>
+                                </details>
                               </div>
                             ))}
                         </div>

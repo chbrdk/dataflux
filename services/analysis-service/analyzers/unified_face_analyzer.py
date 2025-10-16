@@ -193,7 +193,7 @@ class UnifiedFaceAnalyzer(BaseAnalyzer):
             for face in unified_faces:
                 if face.get('embedding_key'):
                     embeddings.append({
-                        'type': 'face_embedding',
+                        'type': 'visual',
                         'model': 'FaceNet-InceptionResnetV1',
                         'dimensions': face.get('embedding_dimensions', 512),
                         'face_id': face.get('face_id'),

@@ -121,13 +121,14 @@ graph TB
   - ClickHouse Analytics
 
 #### 3. Analysis Service (Python)
-- **Port**: 8004
+- **Port**: 2014
 - **Responsibilities**:
   - Kafka Consumer für Asset Processing
-  - Plugin-basierte Analyzer
-  - AI/ML Model Integration
-  - Feature Extraction
-  - Embedding Generation
+  - Plugin-basierte Analyzer (Image, Video, Audio, Document, Docling)
+  - AI/ML Model Integration (YOLO, DeepFace, FaceNet, CLIP, Claude Vision)
+  - Feature Extraction und Segmentierung
+  - Embedding Generation für Vector Search
+  - **Docling Document Analysis**: PDF, Office-Dokumente, HTML-Verarbeitung
 
 #### 4. Auth Service (FastAPI)
 - **Port**: 8006
@@ -381,6 +382,41 @@ class VideoAnalyzer(BaseAnalyzer):
         # Face recognition
         # OCR text extraction
         # Audio analysis
+        pass
+```
+
+#### Docling Document Analyzer Implementation
+```python
+class DoclingAnalyzer(BaseAnalyzer):
+    def get_supported_formats(self) -> List[str]:
+        return [
+            'application/pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'text/html',
+            'image/png', 'image/jpeg', 'image/tiff'
+        ]
+    
+    def extract_segments(self, file_path: str) -> List[Segment]:
+        # PDF layout analysis with OCR
+        # Office document structure extraction
+        # HTML content parsing
+        # Table and figure detection
+        pass
+    
+    def analyze_segment(self, segment: Segment) -> AnalysisResult:
+        # Language detection
+        # Sentiment analysis
+        # Readability scoring
+        # Document type classification
+        # Complexity and formality assessment
+        pass
+    
+    def generate_embeddings(self, content: Any) -> List[Embedding]:
+        # Text embeddings for semantic search
+        # Document structure embeddings
+        # Metadata embeddings
         pass
 ```
 
@@ -665,15 +701,18 @@ jobs:
 - **Custom Models**: User-specific model training
 - **Real-time Learning**: Continuous model improvement
 - **Multi-modal Fusion**: Cross-modal understanding
+- **Docling Enhancements**: Spracherkennung, Custom Models, Batch-Processing
 
 #### Enterprise Features
 - **Multi-tenancy**: Isolated customer environments
 - **Advanced Analytics**: Business intelligence dashboards
 - **API Rate Limiting**: Per-user rate limiting
+- **Document Workflow**: Automatisierte Dokumentenverarbeitung mit Docling
 
 #### Performance Improvements
 - **Edge Computing**: CDN integration for global performance
 - **GPU Acceleration**: CUDA support for ML workloads
 - **Streaming Analytics**: Real-time data processing
+- **Document Caching**: Optimierte Docling-Performance mit LRU-Caching
 
 This architecture provides a solid foundation for a scalable, maintainable, and performant media processing and search platform.

@@ -87,6 +87,20 @@ except ImportError:
     except ImportError:
         SCENE_CLASSIFIER_AVAILABLE = False
 
+# Import Claude Vision analyzer
+try:
+    from .claude_vision_analyzer import create_claude_vision_analyzer, CLAUDE_VISION_AVAILABLE
+    CLAUDE_VISION_ANALYZER_AVAILABLE = CLAUDE_VISION_AVAILABLE
+except ImportError:
+    CLAUDE_VISION_ANALYZER_AVAILABLE = False
+
+# Import video config for Claude Vision mode
+try:
+    from .video_config import get_video_config, ClaudeVisionMode
+    VIDEO_CONFIG_AVAILABLE = True
+except ImportError:
+    VIDEO_CONFIG_AVAILABLE = False
+
 try:
     from .base import BaseAnalyzer
 except ImportError:
@@ -100,7 +114,7 @@ logger = logging.getLogger(__name__)
 class ImageAnalyzer(BaseAnalyzer):
     """Comprehensive image analyzer with multiple AI models and computer vision techniques"""
     
-    def __init__(self):
+    def __init__(self, claude_vision_mode: Optional[str] = None):
         super().__init__()
         self.supported_formats = [
             'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
@@ -115,7 +129,17 @@ class ImageAnalyzer(BaseAnalyzer):
         self.facenet_analyzer = None  # Legacy FaceNet analyzer (kept for compatibility)
         self.unified_face_analyzer = None  # New unified face analyzer
         self.scene_classifier = None  # Scene classification
+        self.claude_vision_analyzer = None  # Claude Vision analysis
         self.device = "cuda" if torch and torch.cuda.is_available() and CLIP_AVAILABLE else "cpu"
+        
+        # Claude Vision configuration
+        self.claude_vision_mode = claude_vision_mode
+        if VIDEO_CONFIG_AVAILABLE and claude_vision_mode is None:
+            try:
+                video_config = get_video_config()
+                self.claude_vision_mode = video_config.claude_vision_mode.value
+            except:
+                self.claude_vision_mode = 'keyframes_only'  # Default
         
         # Initialize models lazily
         self._models_initialized = False
@@ -128,6 +152,9 @@ class ImageAnalyzer(BaseAnalyzer):
         
         # Initialize Scene Classifier
         self._init_scene_classifier()
+        
+        # Initialize Claude Vision Analyzer
+        self._init_claude_vision_analyzer()
     
     def _init_yolo(self):
         """Initialize YOLO model"""
@@ -181,8 +208,189 @@ class ImageAnalyzer(BaseAnalyzer):
             logger.warning("⚠️ Scene Classifier not available (CLIP not installed)")
             self.scene_classifier = None
     
+    def _init_claude_vision_analyzer(self):
+        """Initialize Claude Vision Analyzer for comprehensive image analysis"""
+        if CLAUDE_VISION_ANALYZER_AVAILABLE:
+            try:
+                self.claude_vision_analyzer = create_claude_vision_analyzer()
+                if self.claude_vision_analyzer:
+                    logger.info("🤖 Claude Vision Analyzer successfully initialized")
+                else:
+                    logger.warning("⚠️ Claude Vision Analyzer creation failed")
+                    self.claude_vision_analyzer = None
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Claude Vision Analyzer: {e}")
+                self.claude_vision_analyzer = None
+        else:
+            logger.warning("⚠️ Claude Vision Analyzer not available")
+            self.claude_vision_analyzer = None
+    
     def get_supported_formats(self) -> List[str]:
         return self.supported_formats
+    
+    def extract_segments(self, file_path: str) -> List['Segment']:
+        """
+        Extrahiert Bild-Segmente (für Bilder ist das ein einzelnes Segment)
+        """
+        try:
+            from .base import Segment
+            
+            # Für Bilder erstellen wir ein einzelnes Segment
+            segment = Segment(
+                segment_id="image_segment",
+                start_time=0.0,
+                end_time=0.0,
+                duration=0.0,
+                metadata={
+                    'file_path': file_path,
+                    'analyzer': 'image_analyzer',
+                    'type': 'image'
+                }
+            )
+            return [segment]
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to extract segments: {e}")
+            return []
+    
+    async def analyze_segment(self, segment: 'Segment') -> 'AnalysisResult':
+        """
+        Analysiert ein Bild-Segment
+        """
+        try:
+            from .base import AnalysisResult
+            
+            file_path = segment.metadata.get('file_path', '')
+            
+            # Verwende die bestehende analyze Methode
+            analysis_result = await self.analyze(file_path, {})
+            
+            # Konvertiere zu AnalysisResult Format
+            features = analysis_result.get('features', [])
+            embeddings = analysis_result.get('embeddings', {})
+            
+            return AnalysisResult(
+                segment_id=segment.segment_id,
+                analyzer_type="image_analyzer",
+                features=features,
+                embeddings=embeddings,
+                confidence=analysis_result.get('confidence', 0.8),
+                metadata={
+                    'file_path': file_path,
+                    'analyzer': 'image_analyzer',
+                    'analysis_time': analysis_result.get('analysis_time', 0)
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to analyze segment {segment.segment_id}: {e}")
+            from .base import AnalysisResult
+            return AnalysisResult(
+                segment_id=segment.segment_id,
+                analyzer_type="image_analyzer",
+                features=[],
+                embeddings={},
+                confidence=0.0,
+                metadata={'error': str(e)}
+            )
+    
+    def generate_embeddings(self, segment: 'Segment') -> Dict[str, np.ndarray]:
+        """
+        Generiert Embeddings für ein Bild-Segment
+        """
+        try:
+            file_path = segment.metadata.get('file_path', '')
+            
+            # Lade Bild
+            image = cv2.imread(file_path)
+            if image is None:
+                return {}
+            
+            embeddings = {}
+            
+            # CLIP Embeddings (falls verfügbar)
+            if CLIP_AVAILABLE and hasattr(self, 'clip_model'):
+                try:
+                    # Konvertiere zu RGB
+                    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    
+                    # Resize für CLIP
+                    image_pil = Image.fromarray(image_rgb)
+                    image_pil = image_pil.resize((224, 224))
+                    
+                    # Generiere CLIP Embedding
+                    with torch.no_grad():
+                        image_tensor = self.clip_model.preprocess(image_pil).unsqueeze(0)
+                        image_features = self.clip_model.encode_image(image_tensor)
+                        embeddings['clip'] = image_features.numpy().flatten()
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ CLIP embedding failed: {e}")
+            
+            # Fallback: Einfache visuelle Embeddings
+            if not embeddings:
+                # Extrahiere grundlegende visuelle Features
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                
+                # Histogram-basierte Features
+                hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+                embeddings['histogram'] = hist.flatten().astype(np.float32)
+                
+                # Farb-Mittelwerte
+                mean_color = np.mean(image, axis=(0, 1))
+                embeddings['color_mean'] = mean_color.astype(np.float32)
+            
+            return embeddings
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to generate embeddings: {e}")
+            return {}
+    
+    def get_memory_requirements(self) -> Dict[str, int]:
+        """
+        Gibt Speicheranforderungen für verschiedene Modelle zurück
+        """
+        requirements = {
+            'base_analyzer': 256 * 1024 * 1024,  # 256MB für Basis-Funktionalität
+        }
+        
+        if YOLO_AVAILABLE:
+            requirements['yolo'] = 512 * 1024 * 1024  # 512MB für YOLO
+        
+        if CLIP_AVAILABLE:
+            requirements['clip'] = 1024 * 1024 * 1024  # 1GB für CLIP
+        
+        if DEEPFACE_AVAILABLE:
+            requirements['deepface'] = 512 * 1024 * 1024  # 512MB für DeepFace
+        
+        if FACENET_AVAILABLE:
+            requirements['facenet'] = 256 * 1024 * 1024  # 256MB für FaceNet
+        
+        if CLAUDE_VISION_ANALYZER_AVAILABLE:
+            requirements['claude_vision'] = 128 * 1024 * 1024  # 128MB für Claude Vision
+        
+        # Gesamtschätzung
+        total = sum(requirements.values())
+        requirements['total_estimated'] = total
+        
+        return requirements
+    
+    def should_use_claude_vision(self, frame_context: Optional[Dict[str, Any]] = None) -> bool:
+        """Determine if Claude Vision should be used for this frame"""
+        if not CLAUDE_VISION_ANALYZER_AVAILABLE or not self.claude_vision_analyzer:
+            return False
+        
+        if self.claude_vision_mode == 'disabled':
+            return False
+        elif self.claude_vision_mode == 'all_frames':
+            return True
+        elif self.claude_vision_mode == 'keyframes_only':
+            # Use Claude Vision only for key frames
+            if frame_context:
+                return frame_context.get('is_keyframe', False) or frame_context.get('is_scene_boundary', False)
+            return False
+        
+        return False
     
     async def analyze(self, file_path: str, asset_data: Dict[str, Any]) -> Dict[str, Any]:
         """Comprehensive image analysis with multiple AI models"""
@@ -431,6 +639,43 @@ class ImageAnalyzer(BaseAnalyzer):
                     logger.warning("⚠️ Scene classifier not available")
             except Exception as e:
                 logger.error(f"❌ Scene classification error: {e}")
+            
+            # 7. Claude Vision Analysis - Comprehensive AI-powered image understanding
+            total_attempts += 1
+            try:
+                # Check if Claude Vision should be used for this frame
+                frame_context = asset_data.get('frame_context', {})
+                use_claude_vision = self.should_use_claude_vision(frame_context)
+                
+                if use_claude_vision:
+                    logger.info("🤖 Starting Claude Vision analysis...")
+                    
+                    if CLAUDE_VISION_ANALYZER_AVAILABLE and self.claude_vision_analyzer:
+                        logger.info("🚀 Running Claude Vision analysis...")
+                        claude_results = await self.claude_vision_analyzer.analyze_image(file_path)
+                        
+                        if claude_results and claude_results.get('status') == 'completed':
+                            features.append({
+                                'type': 'claude_vision_analysis',
+                                'domain': 'ai_vision',
+                                'confidence': 0.95,  # Claude Vision is highly reliable
+                                'data': claude_results,
+                                'metadata': {
+                                    'analyzer': 'claude_vision_analyzer',
+                                    'mode': self.claude_vision_mode,
+                                    'frame_context': frame_context
+                                }
+                            })
+                            success_count += 1
+                            logger.info("✅ Claude Vision analysis completed successfully")
+                        else:
+                            logger.warning(f"⚠️ Claude Vision analysis failed: {claude_results.get('error', 'Unknown error')}")
+                    else:
+                        logger.warning("⚠️ Claude Vision analyzer not available")
+                else:
+                    logger.info(f"⏭️ Skipping Claude Vision analysis (mode: {self.claude_vision_mode})")
+            except Exception as e:
+                logger.error(f"❌ Claude Vision analysis error: {e}")
             
             # 8. Object Detection (YOLO) - Works great on Mac M4!
             total_attempts += 1

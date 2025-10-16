@@ -4,7 +4,7 @@ Ein umfassendes System für die Analyse, Speicherung und Verwaltung von Medienin
 
 ## 🏗️ Architektur
 
-DataFlux besteht aus drei Hauptkomponenten:
+DataFlux besteht aus vier Hauptkomponenten:
 
 ### 1. Ingestion Service (Port 2013)
 - **Zweck**: Upload, Speicherung und Verwaltung von Medien-Assets
@@ -34,8 +34,8 @@ DataFlux besteht aus drei Hauptkomponenten:
     - `GET /api/v1/persons/{face_id}/images` - Alle Bilder einer Person
 
 ### 2. Analysis Service (Port 2014)
-- **Zweck**: KI-gestützte Analyse von Medieninhalten
-- **Technologie**: FastAPI, Python, OpenCV, PIL, YOLO, SciPy
+- **Zweck**: KI-gestützte Analyse von Medieninhalten und Dokumenten
+- **Technologie**: FastAPI, Python, OpenCV, PIL, YOLO, SciPy, Docling
 - **Features**:
   - **Umfassende EXIF-Extraktion**:
     - Standard EXIF-Tags
@@ -72,11 +72,43 @@ DataFlux besteht aus drei Hauptkomponenten:
       - Face Quality Assessment (Größe, Winkel, Beleuchtung)
       - 512-dimensionale Face Embeddings für Vergleich
     - **DeepFace-Demographics**: Alters-, Geschlechts-, Rassen- und Emotionsanalyse
+    - **CLIP Scene Classification**: Automatische Szene-Erkennung mit generischen und spezifischen Kategorien
+      - Generische Szenen: "a person or people", "an event or celebration", "an animal or pet"
+      - Spezifische Szenen: "wedding ceremony with bride and groom", "car driving on a road", "garden or flowers"
+      - Automatische Tag-Extraktion aus erkannten Szenen
+    - **Claude Vision Analysis**: Umfassende AI-gestützte Bildanalyse mit Anthropic's Claude
+      - Intelligente Bildvorverarbeitung (automatische Verkleinerung auf max 5 Megapixel)
+      - Strukturierte Analyse in 10 Kategorien: Hauptinhalt, Szenenbeschreibung, Objekte, Personen, Farben, Komposition, Stimmung, technische Aspekte, Text, Tags
+      - Deutsche Sprachausgabe für alle Analysen
+      - Text-Erkennung und Extraktion aus Bildern
+      - Kosteneffiziente Optimierung durch intelligente Bildverkleinerung
+    - **Docling Document Analysis**: Professionelle Dokumentenverarbeitung mit IBM's Docling
+      - **PDF-Verarbeitung**: Layout-Analyse, OCR, Tabellenerkennung, Strukturerhaltung
+      - **Office-Dokumente**: DOCX, PPTX, XLSX mit vollständiger Formatierung
+      - **HTML-Verarbeitung**: Web-Content-Extraktion und Strukturanalyse
+      - **Multimodale Unterstützung**: Bilder, Audio, VTT-Untertitel in Dokumenten
+      - **Intelligente Segmentierung**: Text, Tabellen, Figuren, Überschriften automatisch erkannt
+      - **Metadaten-Extraktion**: Dokumenttyp, Sprache, Komplexität, Formality-Score
+      - **Performance-Optimierung**: LRU-Caching, Dateigrößen-Limits, Batch-Processing
     - OCR-Text-Erkennung
     - Farbanalyse und Histogramme
     - Kompositionsanalyse (Rule of Thirds, Symmetrie)
 
-### 3. Web UI (Port 3000)
+### 3. Claude Vision Service (Port 2015)
+- **Zweck**: Dedizierter Service für Claude Vision AI-Analyse
+- **Technologie**: FastAPI, Anthropic Claude API, PIL/Pillow
+- **Features**:
+  - **Direkte REST API Integration**: Keine Bibliotheken, direkte HTTP-Calls zu Claude
+  - **Intelligente Bildvorverarbeitung**: Automatische Verkleinerung auf max 5 Megapixel
+  - **Modell**: `claude-sonnet-4-5-20250929` (neueste Claude Vision Modelle)
+  - **Endpoints**:
+    - `GET /api/v1/claude/health` - Service Health Check
+    - `POST /api/v1/claude/analyze-path?image_path={path}` - Bildanalyse via Dateipfad
+  - **Antwortzeit**: ~20-25 Sekunden pro Bild
+  - **Strukturierte JSON-Ausgabe**: 10 Kategorien mit detaillierten Analysen
+  - **Deutsche Sprachausgabe**: Alle Analysen in deutscher Sprache
+
+### 4. Web UI (Port 3000)
 - **Zweck**: Benutzeroberfläche für Asset-Management und Analyse-Ergebnisse
 - **Technologie**: Next.js, React, TypeScript, Tailwind CSS
 - **Features**:
@@ -95,15 +127,17 @@ DataFlux besteht aus drei Hauptkomponenten:
     - Einsatz hochauflösender Large-Thumbnails (1200×800px)
     - Intelligente Fallback-Mechanismen bei Bilder-Fehlern
   - **Klickbare Thumbnails**: Direkter Zugriff auf Analyse-Modal
-  - **8 AI-Features automatisch verfügbar**:
+  - **10 AI-Features automatisch verfügbar**:
     - Technical Properties (Dimensionen, Format, Megapixel)
     - Technical Extended (Aspect Ratio, Helligkeit, Kontrast)
     - EXIF Comprehensive (Kamera-Info, GPS, Belichtung)
     - Image Quality (Blur-Score, Noise, Signal-to-Noise Ratio)
     - Composition (Symmetrie, Rule of Thirds)
+    - **Scene Classification (CLIP)**: Automatische Szene-Erkennung mit Confidence-Scores
     - Object Detection (YOLOv8n - Objekte ohne Personen)
     - Face Demographics (DeepFace - Alter, Emotion, Geschlecht, Rasse)
     - Face Recognition (FaceNet - Personenerkennung mit Avatars)
+    - **Claude Vision Analysis**: Umfassende AI-Analyse mit manueller und automatischer Integration
   - Responsive Design mit Tailwind CSS
 
 #### Personen-Management
@@ -122,6 +156,18 @@ DataFlux besteht aus drei Hauptkomponenten:
     - Automatische Erkennung von bekannten vs. neuen Gesichtern
     - Face Quality Assessment für Erkennungsgenauigkeit
 
+#### Claude Vision Integration
+  - **Manuelle Analyse**: 
+    - "Claude Vision" Button im Analyse-Modal Header
+    - Dedicierter "Claude Vision" Tab mit schönem UI
+    - Loading States und Error Handling
+    - Strukturierte Anzeige aller 10 Analyse-Kategorien
+  - **Automatische Integration**:
+    - Claude Vision wird automatisch bei jedem neuen Upload ausgeführt
+    - Integration in den normalen Analyse-Workflow
+    - Speicherung als Feature in der Datenbank
+    - Verfügbar über Features API Endpoint
+
 #### Navigation
   - **Sidebar-Navigation**: Linksseitige Navigation mit allen Hauptfunktionen
     - Dashboard (Übersicht)
@@ -139,6 +185,7 @@ DataFlux besteht aus drei Hauptkomponenten:
 - Node.js 20.19.5
 - PostgreSQL (Port 2001)
 - Redis (Port 7003)
+- Anthropic Claude API Key (für Claude Vision Features)
 
 ### Lokale Ausführung (Empfohlen für Mac Mini M4)
 
@@ -162,13 +209,13 @@ REDIS_URL="redis://:secure_redis_password_here@localhost:2002" \
 python3 src/main_simple.py
 ```
 
-#### 2. Analysis Service (Port 8004)
+#### 2. Analysis Service (Port 2014)
 ```bash
 cd services/analysis-service
-PYTORCH_ENABLE_MPS_FALLBACK=1 \
 DATABASE_URL="postgresql://dataflux_user:secure_password_here@localhost:2001/dataflux" \
-REDIS_URL="redis://:secure_redis_password_here@localhost:2002" \
+CLAUDE_API_KEY="your_anthropic_api_key_here" \
 INGESTION_SERVICE_URL="http://localhost:2013" \
+PYTHONPATH=/Users/m4mini/Desktop/DOCKER-local/DATAFLUX/services/analysis-service \
 python3 src/api_processor.py
 ```
 
@@ -222,12 +269,19 @@ npm run dev
 
 #### Analyse
 - `POST /api/v1/analyze/image` - Bild analysieren
+- `POST /api/v1/analyze/document` - Dokument analysieren (PDF, DOCX, PPTX, XLSX, HTML)
 - `GET /health` - Service-Status prüfen
 
 #### Face Database
 - Face Database wird automatisch in `/tmp/dataflux_face_database.json` gespeichert
 - Avatar-Bilder werden in `/tmp/dataflux_avatars/` gespeichert
 - Persistente Face IDs mit Embeddings für Wiedererkennung
+
+#### Docling Document Analysis
+- **Unterstützte Formate**: PDF, DOCX, PPTX, XLSX, HTML, PNG, TIFF, JPEG
+- **Features**: Layout-Analyse, OCR, Tabellenerkennung, Strukturerhaltung
+- **Performance**: LRU-Caching für wiederholte Dokumente
+- **Metadaten**: Dokumenttyp, Sprache, Komplexität, Formality-Score
 
 ## 🔍 Umfassende Bildanalyse
 
@@ -440,9 +494,9 @@ Produkt-Modal → Large für immersive Erfahrung
 ### Geplante Features
 - **Video-Analyse**: Erweiterte Video-Verarbeitung
 - **Audio-Analyse**: Audio-Content-Analyse
-- **Dokument-Analyse**: OCR und Text-Extraktion
 - **Weaviate-Integration**: Vector-Search für Embeddings
 - **Docker-Compose**: Vollständige Container-Orchestrierung
+- **Erweiterte Docling-Features**: Spracherkennung, Custom Models, Batch-Processing
 
 ### Verbesserungen
 - **Caching**: Erweiterte Caching-Strategien
@@ -451,6 +505,18 @@ Produkt-Modal → Large für immersive Erfahrung
 - **Testing**: Umfassende Test-Suite
 
 ## 📝 Changelog
+
+### Version 1.3.0 📄
+- ✅ **Docling Document Analysis**: Vollständige Integration von IBM's Docling für professionelle Dokumentenverarbeitung
+- ✅ **PDF-Verarbeitung**: Layout-Analyse, OCR, Tabellenerkennung, Strukturerhaltung
+- ✅ **Office-Dokumente**: DOCX, PPTX, XLSX mit vollständiger Formatierung und Metadaten-Extraktion
+- ✅ **HTML-Verarbeitung**: Web-Content-Extraktion und intelligente Strukturanalyse
+- ✅ **Multimodale Unterstützung**: Bilder, Audio, VTT-Untertitel in Dokumenten
+- ✅ **Intelligente Segmentierung**: Automatische Erkennung von Text, Tabellen, Figuren, Überschriften
+- ✅ **Erweiterte Metadaten**: Dokumenttyp-Klassifizierung, Spracherkennung, Komplexitäts- und Formality-Score
+- ✅ **Performance-Optimierung**: LRU-Caching, Dateigrößen-Limits, intelligente Analyzer-Routierung
+- ✅ **Nahtlose Integration**: Kompatibel mit bestehender DataFlux-Architektur und Kafka-Pipeline
+- ✅ **Database Schema Updates**: Erweiterte Constraints für Docling-Segmente und Features
 
 ### Version 1.2.0 🎨
 - ✅ **Multi-Thumbnail-System**: Automatische Generierung verschiedener Größen (small/medium/large)

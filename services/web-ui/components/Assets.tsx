@@ -18,10 +18,22 @@ import {
   Clock,
   Calendar,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  X,
+  Folder,
+  FolderPlus,
+  ChevronRight,
+  Home,
+  Move,
+  Edit,
+  Plus
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import AnalysisResults from './AnalysisResults'
+import dynamic from 'next/dynamic'
+
+// Dynamically import PDFViewer to avoid SSR issues
+const PDFViewer = dynamic(() => import('./PDFViewer'), { ssr: false })
 
 interface Asset {
   id: string
@@ -32,12 +44,22 @@ interface Asset {
   created_at: string
   thumbnail_path?: string
   dimensions?: { width: number; height: number }
+  folder_id?: string
   metadata?: {
     duration?: number
     dimensions?: { width: number; height: number }
     thumbnail?: string
     features_data?: Record<string, any>
   }
+}
+
+interface Folder {
+  id: string
+  name: string
+  parent_id?: string
+  created_at: string
+  updated_at: string
+  asset_count?: number
 }
 
 const Assets: React.FC = () => {
@@ -48,16 +70,28 @@ const Assets: React.FC = () => {
     type: '',
     dateRange: ''
   })
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedAssetForAnalysis, setSelectedAssetForAnalysis] = useState<string | null>(null)
   const [assetToDelete, setAssetToDelete] = useState<Asset | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showPDFViewer, setShowPDFViewer] = useState(false)
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
+  const [showCreateFolder, setShowCreateFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [draggedAsset, setDraggedAsset] = useState<string | null>(null)
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
+  const [showFolderContextMenu, setShowFolderContextMenu] = useState<{ x: number; y: number; folderId: string } | null>(null)
   
   const queryClient = useQueryClient()
 
   const { data: assetsData, isLoading, refetch } = useQuery({
-    queryKey: ['assets'],
+    queryKey: ['assets', currentFolderId],
     queryFn: async () => {
-      const response = await fetch('http://localhost:2013/api/v1/assets')
+      const url = currentFolderId 
+        ? `http://localhost:2013/api/v1/assets?folder_id=${currentFolderId}`
+        : 'http://localhost:2013/api/v1/assets'
+      const response = await fetch(url)
       if (!response.ok) {
         throw new Error('Failed to fetch assets')
       }
@@ -67,7 +101,152 @@ const Assets: React.FC = () => {
     staleTime: 30000 // 30 seconds
   })
 
-  const assets = assetsData?.assets || []
+  const { data: foldersData, refetch: refetchFolders } = useQuery({
+    queryKey: ['folders'],
+    queryFn: async () => {
+      const response = await fetch('http://localhost:2013/api/v1/folders')
+      if (!response.ok) {
+        throw new Error('Failed to fetch folders')
+      }
+      return response.json()
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 30000 // 30 seconds
+  })
+
+  const allAssets = assetsData?.assets || []
+  
+  // Filter assets based on search query and filters
+  const filteredAssets = allAssets.filter((asset: Asset) => {
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      const matchesSearch = 
+        asset.filename.toLowerCase().includes(query) ||
+        asset.mime_type.toLowerCase().includes(query) ||
+        asset.processing_status.toLowerCase().includes(query)
+      
+      if (!matchesSearch) return false
+    }
+    
+    // Status filter
+    if (filters.status && asset.processing_status !== filters.status) {
+      return false
+    }
+    
+    // Type filter
+    if (filters.type) {
+      const assetType = asset.mime_type.split('/')[0]
+      if (assetType !== filters.type) {
+        return false
+      }
+    }
+    
+    // Date range filter (basic implementation)
+    if (filters.dateRange) {
+      const assetDate = new Date(asset.created_at)
+      const now = new Date()
+      
+      switch (filters.dateRange) {
+        case 'today':
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+          if (assetDate < today) return false
+          break
+        case 'week':
+          const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+          if (assetDate < weekAgo) return false
+          break
+        case 'month':
+          const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+          if (assetDate < monthAgo) return false
+          break
+        case 'year':
+          const yearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000)
+          if (assetDate < yearAgo) return false
+          break
+      }
+    }
+    
+    return true
+  })
+  
+  const assets = filteredAssets
+  const folders = foldersData?.folders || []
+  
+  // Create folder mutation
+  const createFolderMutation = useMutation({
+    mutationFn: async (folderData: { name: string; parent_id?: string }) => {
+      const response = await fetch('http://localhost:2013/api/v1/folders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(folderData)
+      })
+      if (!response.ok) {
+        throw new Error('Failed to create folder')
+      }
+      return response.json()
+    },
+    onSuccess: () => {
+      toast.success('Ordner erfolgreich erstellt')
+      queryClient.invalidateQueries({ queryKey: ['folders'] })
+      setShowCreateFolder(false)
+      setNewFolderName('')
+    },
+    onError: (error) => {
+      toast.error('Fehler beim Erstellen des Ordners')
+      console.error('Create folder error:', error)
+    }
+  })
+
+  // Move asset mutation
+  const moveAssetMutation = useMutation({
+    mutationFn: async ({ assetId, folderId }: { assetId: string; folderId: string | null }) => {
+      const response = await fetch(`http://localhost:2013/api/v1/assets/${assetId}/move`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ folder_id: folderId })
+      })
+      if (!response.ok) {
+        throw new Error('Failed to move asset')
+      }
+      return response.json()
+    },
+    onSuccess: () => {
+      toast.success('Asset erfolgreich verschoben')
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+      queryClient.invalidateQueries({ queryKey: ['folders'] })
+    },
+    onError: (error) => {
+      toast.error('Fehler beim Verschieben des Assets')
+      console.error('Move asset error:', error)
+    }
+  })
+
+  // Delete folder mutation
+  const deleteFolderMutation = useMutation({
+    mutationFn: async (folderId: string) => {
+      const response = await fetch(`http://localhost:2013/api/v1/folders/${folderId}`, {
+        method: 'DELETE'
+      })
+      if (!response.ok) {
+        throw new Error('Failed to delete folder')
+      }
+      return response.json()
+    },
+    onSuccess: () => {
+      toast.success('Ordner erfolgreich gelöscht')
+      queryClient.invalidateQueries({ queryKey: ['folders'] })
+      queryClient.invalidateQueries({ queryKey: ['assets'] })
+    },
+    onError: (error) => {
+      toast.error('Fehler beim Löschen des Ordners')
+      console.error('Delete folder error:', error)
+    }
+  })
   
   // Delete mutation
   const deleteMutation = useMutation({
@@ -139,6 +318,98 @@ const Assets: React.FC = () => {
     }
   }
 
+  const handleCreateFolder = () => {
+    if (newFolderName.trim()) {
+      createFolderMutation.mutate({ 
+        name: newFolderName.trim(), 
+        parent_id: currentFolderId || undefined 
+      })
+    }
+  }
+
+  const handleMoveAsset = (assetId: string, folderId: string | null) => {
+    moveAssetMutation.mutate({ assetId, folderId })
+  }
+
+  const handleFolderClick = (folderId: string | null) => {
+    setCurrentFolderId(folderId)
+  }
+
+  const handleFolderContextMenu = (e: React.MouseEvent, folderId: string) => {
+    e.preventDefault()
+    setShowFolderContextMenu({ x: e.clientX, y: e.clientY, folderId })
+  }
+
+  const handleDragStart = (e: React.DragEvent, assetId: string) => {
+    setDraggedAsset(assetId)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDragOver = (e: React.DragEvent, folderId?: string | null) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (folderId !== undefined) {
+      setDragOverFolder(folderId)
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverFolder(null)
+  }
+
+  const handleDrop = (e: React.DragEvent, targetFolderId: string | null) => {
+    e.preventDefault()
+    if (draggedAsset && draggedAsset !== targetFolderId) {
+      // Handle level-up case
+      if (targetFolderId === 'level-up') {
+        handleMoveAsset(draggedAsset, null) // Move to parent level (null = Main Folder)
+      } else {
+        handleMoveAsset(draggedAsset, targetFolderId)
+      }
+    }
+    setDraggedAsset(null)
+    setDragOverFolder(null)
+  }
+
+  const getCurrentFolderPath = () => {
+    if (!currentFolderId) return []
+    
+    const path: Folder[] = []
+    const findPath = (folderId: string, allFolders: Folder[]): boolean => {
+      const folder = allFolders.find(f => f.id === folderId)
+      if (!folder) return false
+      
+      path.unshift(folder)
+      if (folder.parent_id) {
+        return findPath(folder.parent_id, allFolders)
+      }
+      return true
+    }
+    
+    findPath(currentFolderId, folders)
+    return path
+  }
+
+  const getCurrentFolderName = () => {
+    if (!currentFolderId) return 'Main Folder'
+    const folder = folders.find((f: Folder) => f.id === currentFolderId)
+    return folder?.name || 'Unbekannter Ordner'
+  }
+
+  const handleViewAsset = (assetId: string) => {
+    const asset = assets.find((a: Asset) => a.id === assetId)
+    if (asset) {
+      setSelectedAsset(asset)
+      if (asset.mime_type === 'application/pdf') {
+        setShowPDFViewer(true)
+      } else {
+        // For non-PDF files, show analysis results or download
+        setSelectedAssetForAnalysis(assetId)
+      }
+    }
+  }
+
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith('video/')) return Video
     if (mimeType.startsWith('image/')) return Image
@@ -148,10 +419,6 @@ const Assets: React.FC = () => {
 
   // Mock analysis data creation
   const handleShowAnalysis = (assetId: string) => {
-    setSelectedAssetForAnalysis(assetId)
-  }
-
-  const handleViewAsset = (assetId: string) => {
     setSelectedAssetForAnalysis(assetId)
   }
 
@@ -282,7 +549,10 @@ const Assets: React.FC = () => {
         </div>
         <div className="flex items-center space-x-2">
           <div className="text-sm text-gray-500">
-            {assets?.length || 0} files
+            {assets?.length || 0} files, {folders.filter((folder: Folder) => folder.parent_id === currentFolderId).length} folders
+            {(searchQuery || filters.status || filters.type || filters.dateRange) && (
+              <span className="text-blue-600 ml-1">(filtered)</span>
+            )}
           </div>
           <button
             onClick={() => refetch()}
@@ -291,6 +561,78 @@ const Assets: React.FC = () => {
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+        </div>
+      </div>
+
+      {/* Folder Navigation */}
+      <div 
+        className={`bg-white rounded-lg border p-4 transition-colors ${
+          dragOverFolder === null 
+            ? 'border-blue-500 bg-blue-50' 
+            : 'border-gray-200'
+        }`}
+        onDragOver={(e) => handleDragOver(e, null)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDrop(e, null)}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => handleFolderClick(null)}
+              className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
+                !currentFolderId 
+                  ? 'bg-blue-100 text-blue-700' 
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <Home className="w-4 h-4" />
+              <span>Main Folder</span>
+            </button>
+            
+            {getCurrentFolderPath().map((folder, index) => (
+              <React.Fragment key={folder.id}>
+                <ChevronRight className="w-4 h-4 text-gray-400" />
+                <button
+                  onClick={() => handleFolderClick(folder.id)}
+                  className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
+                    currentFolderId === folder.id 
+                      ? 'bg-blue-100 text-blue-700' 
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  <Folder className="w-4 h-4" />
+                  <span>{folder.name}</span>
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowCreateFolder(true)}
+              className="flex items-center space-x-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <FolderPlus className="w-4 h-4" />
+              <span>Neuer Ordner</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Current Folder Info */}
+        <div className="flex items-center space-x-4 text-sm text-gray-600">
+          <div className="flex items-center space-x-1">
+            <Folder className="w-4 h-4" />
+            <span>Aktueller Ordner: <strong>{getCurrentFolderName()}</strong></span>
+          </div>
+          {currentFolderId && (
+            <button
+              onClick={() => handleFolderClick(null)}
+              className="text-blue-600 hover:text-blue-700 flex items-center space-x-1"
+            >
+              <Home className="w-3 h-3" />
+              <span>Zurück zum Main Folder</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -304,8 +646,18 @@ const Assets: React.FC = () => {
               <input
                 type="text"
                 placeholder="Search assets..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             {/* Filters */}
@@ -332,12 +684,38 @@ const Assets: React.FC = () => {
                 <option value="video">Video</option>
                 <option value="image">Image</option>
                 <option value="audio">Audio</option>
-                <option value="document">Document</option>
+                <option value="application">Document</option>
+                <option value="text">Text</option>
+              </select>
+              
+              <select
+                value={filters.dateRange}
+                onChange={(e) => setFilters(prev => ({ ...prev, dateRange: e.target.value }))}
+                className="text-sm border border-gray-300 rounded-md px-2 py-1"
+              >
+                <option value="">All Time</option>
+                <option value="today">Today</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+                <option value="year">This Year</option>
               </select>
             </div>
           </div>
 
           <div className="flex items-center space-x-2">
+            {/* Clear Filters Button */}
+            {(searchQuery || filters.status || filters.type || filters.dateRange) && (
+              <button
+                onClick={() => {
+                  setSearchQuery('')
+                  setFilters({ status: '', type: '', dateRange: '' })
+                }}
+                className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors"
+              >
+                Clear Filters
+              </button>
+            )}
+            
             {/* View Mode */}
             <div className="flex items-center space-x-1">
               <button
@@ -377,29 +755,199 @@ const Assets: React.FC = () => {
       {/* Assets Grid/List */}
       {viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {/* Level-Up Card */}
+          {currentFolderId && (
+            <div 
+              className={`bg-white rounded-lg border overflow-hidden hover:shadow-lg transition-all cursor-pointer ${
+                dragOverFolder === 'level-up' 
+                  ? 'border-green-500 bg-green-50 shadow-lg' 
+                  : 'border-gray-200'
+              }`}
+              onClick={() => handleFolderClick(null)}
+              onDragOver={(e) => handleDragOver(e, 'level-up')}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, null)}
+            >
+              {/* Level-Up Icon */}
+              <div className="relative aspect-video bg-gradient-to-br from-green-50 to-green-100 flex items-center justify-center hover:from-green-100 hover:to-green-200 transition-colors">
+                <div className="text-center">
+                  <ChevronRight className="w-16 h-16 text-green-600 mx-auto mb-2 rotate-180" />
+                  <div className="text-sm font-medium text-green-800">Level Up</div>
+                  <div className="text-xs text-green-600">Eine Ebene höher</div>
+                </div>
+                {/* Click overlay */}
+                <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-10 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100">
+                  <ChevronRight className="w-8 h-8 text-white rotate-180" />
+                </div>
+              </div>
+
+              {/* Level-Up Info */}
+              <div className="p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <h4 className="font-medium text-gray-900 truncate flex-1">
+                    Level Up
+                  </h4>
+                </div>
+                
+                <div className="space-y-2 text-sm text-gray-600">
+                  <div className="flex items-center justify-between">
+                    <span className="capitalize">Navigation</span>
+                    <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-800">
+                      Up
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span>Action</span>
+                    <span>Eine Ebene höher</span>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleFolderClick(null)
+                    }}
+                    className="flex items-center space-x-1 text-green-600 hover:text-green-700 text-sm transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                    <span>Go Up</span>
+                  </button>
+                  
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs text-gray-500">Drop assets here to move up</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Folder Cards */}
+          {folders
+            .filter((folder: Folder) => folder.parent_id === currentFolderId)
+            .map((folder: Folder) => (
+              <div 
+                key={folder.id} 
+                className={`bg-white rounded-lg border overflow-hidden hover:shadow-lg transition-all cursor-pointer ${
+                  dragOverFolder === folder.id 
+                    ? 'border-blue-500 bg-blue-50 shadow-lg' 
+                    : 'border-gray-200'
+                }`}
+                onClick={() => handleFolderClick(folder.id)}
+                onContextMenu={(e) => handleFolderContextMenu(e, folder.id)}
+                onDragOver={(e) => handleDragOver(e, folder.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, folder.id)}
+              >
+                {/* Folder Icon */}
+                <div className="relative aspect-video bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center hover:from-blue-100 hover:to-blue-200 transition-colors">
+                  <div className="text-center">
+                    <Folder className="w-16 h-16 text-blue-600 mx-auto mb-2" />
+                    <div className="text-sm font-medium text-blue-800">{folder.name}</div>
+                    <div className="text-xs text-blue-600">{folder.asset_count || 0} items</div>
+                  </div>
+                  {/* Click overlay */}
+                  <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-10 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100">
+                    <FolderOpen className="w-8 h-8 text-white" />
+                  </div>
+                </div>
+
+                {/* Folder Info */}
+                <div className="p-4">
+                  <div className="flex items-start justify-between mb-2">
+                    <h4 className="font-medium text-gray-900 truncate flex-1">
+                      {folder.name}
+                    </h4>
+                    <button className="p-1 text-gray-400 hover:text-gray-600">
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-2 text-sm text-gray-600">
+                    <div className="flex items-center justify-between">
+                      <span className="capitalize">Folder</span>
+                      <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-800">
+                        {folder.asset_count || 0} items
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between">
+                      <span>Created</span>
+                      <span>{formatDate(folder.created_at)}</span>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleFolderClick(folder.id)
+                      }}
+                      className="flex items-center space-x-1 text-blue-600 hover:text-blue-700 text-sm transition-colors"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                      <span>Open</span>
+                    </button>
+                    
+                    <div className="flex items-center space-x-2">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          // TODO: Implement folder rename
+                        }}
+                        className="p-1 text-gray-400 hover:text-gray-600"
+                        title="Ordner umbenennen"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (confirm('Möchten Sie diesen Ordner wirklich löschen?')) {
+                            deleteFolderMutation.mutate(folder.id)
+                          }
+                        }}
+                        className="p-1 text-red-400 hover:text-red-600"
+                        title="Ordner löschen"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+          {/* Asset Cards */}
           {assets?.map((asset: Asset) => {
             const FileIcon = getFileIcon(asset.mime_type)
             
             return (
-              <div key={asset.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
+              <div 
+                key={asset.id} 
+                className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow"
+                draggable
+                onDragStart={(e) => handleDragStart(e, asset.id)}
+              >
                 {/* Thumbnail - Clickable */}
                 <div 
                   className="relative aspect-video bg-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors"
                   onClick={() => handleViewAsset(asset.id)}
                 >
-                  {asset.thumbnail_path ? (
-                    <img 
-                      src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
-                      alt={asset.filename}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        // Fallback to icon if thumbnail fails to load
-                        e.currentTarget.style.display = 'none'
-                        e.currentTarget.nextElementSibling?.setAttribute('style', 'display: block')
-                      }}
-                    />
-                  ) : null}
-                  <FileIcon className={`w-12 h-12 text-gray-400 ${asset.thumbnail_path ? 'hidden' : ''}`} />
+                  <img 
+                    src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
+                    alt={asset.filename}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      // Fallback to icon if thumbnail fails to load
+                      e.currentTarget.style.display = 'none'
+                      e.currentTarget.nextElementSibling?.setAttribute('style', 'display: block')
+                    }}
+                  />
+                  <FileIcon className="w-12 h-12 text-gray-400 hidden" />
                   {/* Click overlay */}
                   <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100">
                     <Eye className="w-8 h-8 text-white" />
@@ -491,11 +1039,163 @@ const Assets: React.FC = () => {
 
           {/* List Items */}
           <div className="divide-y divide-gray-200">
+            {/* Level-Up Item */}
+            {currentFolderId && (
+              <div 
+                className={`px-6 py-4 cursor-pointer transition-colors ${
+                  dragOverFolder === 'level-up' 
+                    ? 'bg-green-50 border-green-200' 
+                    : 'hover:bg-gray-50'
+                }`}
+                onClick={() => handleFolderClick(null)}
+                onDragOver={(e) => handleDragOver(e, 'level-up')}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, null)}
+              >
+                <div className="flex items-center space-x-4">
+                  <input
+                    type="checkbox"
+                    disabled
+                    className="rounded border-gray-300 opacity-50"
+                  />
+                  
+                  <div 
+                    className="w-12 h-12 bg-gradient-to-br from-green-50 to-green-100 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden hover:from-green-100 hover:to-green-200 transition-colors relative"
+                  >
+                    <ChevronRight className="w-6 h-6 text-green-600 rotate-180" />
+                    {/* Click overlay */}
+                    <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100 rounded-lg">
+                      <ChevronRight className="w-4 h-4 text-white rotate-180" />
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-medium text-gray-900 truncate">
+                      Level Up
+                    </h4>
+                    <div className="flex items-center space-x-4 mt-1 text-sm text-gray-600">
+                      <span className="capitalize">Navigation</span>
+                      <span>Eine Ebene höher</span>
+                      <span>Drop assets here to move up</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-800">
+                      Level Up
+                    </span>
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleFolderClick(null)
+                      }}
+                      className="p-2 text-green-400 hover:text-green-600 transition-colors"
+                      title="Eine Ebene höher"
+                    >
+                      <ChevronRight className="w-4 h-4 rotate-180" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Folder Items */}
+            {folders
+              .filter((folder: Folder) => folder.parent_id === currentFolderId)
+              .map((folder: Folder) => (
+                <div 
+                  key={folder.id} 
+                  className={`px-6 py-4 cursor-pointer transition-colors ${
+                    dragOverFolder === folder.id 
+                      ? 'bg-blue-50 border-blue-200' 
+                      : 'hover:bg-gray-50'
+                  }`}
+                  onClick={() => handleFolderClick(folder.id)}
+                  onContextMenu={(e) => handleFolderContextMenu(e, folder.id)}
+                  onDragOver={(e) => handleDragOver(e, folder.id)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={(e) => handleDrop(e, folder.id)}
+                >
+                  <div className="flex items-center space-x-4">
+                    <input
+                      type="checkbox"
+                      disabled
+                      className="rounded border-gray-300 opacity-50"
+                    />
+                    
+                    <div 
+                      className="w-12 h-12 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden hover:from-blue-100 hover:to-blue-200 transition-colors relative"
+                    >
+                      <Folder className="w-6 h-6 text-blue-600" />
+                      {/* Click overlay */}
+                      <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100 rounded-lg">
+                        <FolderOpen className="w-4 h-4 text-white" />
+                      </div>
+                    </div>
+                    
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-gray-900 truncate">
+                        {folder.name}
+                      </h4>
+                      <div className="flex items-center space-x-4 mt-1 text-sm text-gray-600">
+                        <span className="capitalize">Folder</span>
+                        <span>{folder.asset_count || 0} items</span>
+                        <span>{formatDate(folder.created_at)}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-800">
+                        Folder
+                      </span>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleFolderClick(folder.id)
+                        }}
+                        className="p-2 text-blue-400 hover:text-blue-600 transition-colors"
+                        title="Ordner öffnen"
+                      >
+                        <FolderOpen className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          // TODO: Implement folder rename
+                        }}
+                        className="p-2 text-gray-400 hover:text-gray-600"
+                        title="Umbenennen"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (confirm('Möchten Sie diesen Ordner wirklich löschen?')) {
+                            deleteFolderMutation.mutate(folder.id)
+                          }
+                        }}
+                        className="p-2 text-red-400 hover:text-red-600"
+                        title="Löschen"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+            {/* Asset Items */}
             {assets?.map((asset: Asset) => {
               const FileIcon = getFileIcon(asset.mime_type)
               
               return (
-                <div key={asset.id} className="px-6 py-4 hover:bg-gray-50">
+                <div 
+                  key={asset.id} 
+                  className="px-6 py-4 hover:bg-gray-50"
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, asset.id)}
+                >
                   <div className="flex items-center space-x-4">
                     <input
                       type="checkbox"
@@ -508,18 +1208,16 @@ const Assets: React.FC = () => {
                       className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer hover:bg-gray-200 transition-colors relative"
                       onClick={() => handleViewAsset(asset.id)}
                     >
-                      {asset.thumbnail_path ? (
-                        <img 
-                          src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
-                          alt={asset.filename}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none'
-                            e.currentTarget.nextElementSibling?.setAttribute('style', 'display: block')
-                          }}
-                        />
-                      ) : null}
-                      <FileIcon className={`w-6 h-6 text-gray-400 ${asset.thumbnail_path ? 'hidden' : ''}`} />
+                      <img 
+                        src={`http://localhost:2013/api/v1/assets/${asset.id}/thumbnail`}
+                        alt={asset.filename}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                          e.currentTarget.nextElementSibling?.setAttribute('style', 'display: block')
+                        }}
+                      />
+                      <FileIcon className="w-6 h-6 text-gray-400 hidden" />
                       {/* Click overlay */}
                       <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100 rounded-lg">
                         <Eye className="w-4 h-4 text-white" />
@@ -571,11 +1269,40 @@ const Assets: React.FC = () => {
       )}
 
       {/* Empty State */}
-      {assets?.length === 0 && (
+      {assets?.length === 0 && folders.filter((folder: Folder) => folder.parent_id === currentFolderId).length === 0 && (
         <div className="text-center py-12">
           <FolderOpen className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No assets found</h3>
-          <p className="text-gray-600">Upload some files to get started</p>
+          {allAssets?.length === 0 && folders.length === 0 ? (
+            <>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No assets or folders found</h3>
+              <p className="text-gray-600 mb-4">Upload some files or create folders to get started</p>
+              <div className="flex items-center justify-center space-x-4">
+                <button
+                  onClick={() => setShowCreateFolder(true)}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
+                >
+                  <FolderPlus className="w-4 h-4" />
+                  <span>Create Folder</span>
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No items match your filters</h3>
+              <p className="text-gray-600 mb-4">
+                Try adjusting your search criteria or clear the filters
+              </p>
+              <button
+                onClick={() => {
+                  setSearchQuery('')
+                  setFilters({ status: '', type: '', dateRange: '' })
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Clear All Filters
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -639,6 +1366,124 @@ const Assets: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* PDF Viewer Modal */}
+      {selectedAsset && (
+        <PDFViewer
+          isOpen={showPDFViewer}
+          onClose={() => {
+            setShowPDFViewer(false)
+            setSelectedAsset(null)
+          }}
+          assetId={selectedAsset.id}
+          filename={selectedAsset.filename}
+        />
+      )}
+
+      {/* Create Folder Modal */}
+      {showCreateFolder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                <FolderPlus className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Neuen Ordner erstellen
+                </h3>
+                <p className="text-sm text-gray-600">
+                  {currentFolderId ? 'in ' + getCurrentFolderName() : 'im Hauptverzeichnis'}
+                </p>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Ordnername
+              </label>
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="z.B. Meine Bilder"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                autoFocus
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    handleCreateFolder()
+                  }
+                }}
+              />
+            </div>
+            
+            <div className="flex items-center justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setShowCreateFolder(false)
+                  setNewFolderName('')
+                }}
+                disabled={createFolderMutation.isPending}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={handleCreateFolder}
+                disabled={createFolderMutation.isPending || !newFolderName.trim()}
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center space-x-2"
+              >
+                {createFolderMutation.isPending ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Erstelle...</span>
+                  </>
+                ) : (
+                  <>
+                    <FolderPlus className="w-4 h-4" />
+                    <span>Erstellen</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Folder Context Menu */}
+      {showFolderContextMenu && (
+        <div 
+          className="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-2 min-w-[160px]"
+          style={{
+            left: showFolderContextMenu.x,
+            top: showFolderContextMenu.y
+          }}
+          onClick={() => setShowFolderContextMenu(null)}
+        >
+          <button
+            onClick={() => {
+              // TODO: Implement folder rename
+              setShowFolderContextMenu(null)
+            }}
+            className="w-full px-4 py-2 text-left text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
+          >
+            <Edit className="w-4 h-4" />
+            <span>Umbenennen</span>
+          </button>
+          <button
+            onClick={() => {
+              if (confirm('Möchten Sie diesen Ordner wirklich löschen?')) {
+                deleteFolderMutation.mutate(showFolderContextMenu.folderId)
+                setShowFolderContextMenu(null)
+              }
+            }}
+            className="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 flex items-center space-x-2"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Löschen</span>
+          </button>
         </div>
       )}
     </div>

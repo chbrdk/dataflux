@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type ViewType = 'dashboard' | 'upload' | 'search' | 'assets' | 'analytics' | 'persons'
+export type ViewType = 'dashboard' | 'upload' | 'search' | 'assets' | 'analytics' | 'persons' | 'query'
 
 interface AppState {
   // UI State
@@ -33,6 +33,17 @@ interface AppState {
   // Service Status
   serviceStatus: Record<string, 'running' | 'stopped' | 'error'>
   setServiceStatus: (service: string, status: 'running' | 'stopped' | 'error') => void
+  
+  // Chat State
+  chatHistory: Array<{
+    id: string
+    role: 'user' | 'assistant'
+    content: string
+    assets?: any[]
+    timestamp: Date
+  }>
+  addChatMessage: (message: Omit<AppState['chatHistory'][0], 'id' | 'timestamp'>) => void
+  clearChatHistory: () => void
   
   // Notifications
   notifications: Array<{
@@ -83,12 +94,28 @@ export const useAppStore = create<AppState>()(
         ingestion: 'running',
         query: 'running',
         analysis: 'running',
-        mcp: 'running'
+        mcp: 'running',
+        search: 'running'
       },
       setServiceStatus: (service, status) =>
         set((state) => ({
           serviceStatus: { ...state.serviceStatus, [service]: status }
         })),
+      
+      // Chat State
+      chatHistory: [],
+      addChatMessage: (message) =>
+        set((state) => ({
+          chatHistory: [
+            ...state.chatHistory,
+            {
+              ...message,
+              id: Math.random().toString(36).substr(2, 9),
+              timestamp: new Date()
+            }
+          ]
+        })),
+      clearChatHistory: () => set({ chatHistory: [] }),
       
       // Notifications
       notifications: [],

@@ -20,7 +20,7 @@ DATAFLUX läuft vollständig lokal auf dem Mac Mini M4 mit Apple Silicon GPU-Bes
 |---------|------|--------------|-------------|
 | **Web-UI** | 3000 | Next.js Frontend | Lokal |
 | **Ingestion** | 2013 | FastAPI Upload Service | Lokal |
-| **Analysis** | 2014 | AI/ML Analyzer | M4 GPU |
+| **Analysis** | 2014 | AI/ML Analyzer + Docling | M4 GPU |
 | **Query** | 8003 | Go Search Service | Lokal |
 | **PostgreSQL** | 2001 | Datenbank | Docker |
 | **Redis** | 2002 | Cache | Docker |
@@ -31,6 +31,7 @@ DATAFLUX läuft vollständig lokal auf dem Mac Mini M4 mit Apple Silicon GPU-Bes
 - ✅ **DeepFace** - Gesichtserkennung (Alter, Geschlecht, Emotion)
 - ✅ **FaceNet MTCNN** - Face Detection (CPU)
 - ✅ **FaceNet Recognition** - 512D Face Embeddings
+- ✅ **Docling** - Professionelle Dokumentenverarbeitung (PDF, Office, HTML)
 
 ## 🔧 Manuelle Verwaltung
 
@@ -46,6 +47,9 @@ python3 src/main_simple.py
 # Analysis Service  
 cd services/analysis-service
 DATABASE_URL="postgresql://dataflux_user:secure_password_here@localhost:2001/dataflux" \
+CLAUDE_API_KEY="your_anthropic_api_key_here" \
+INGESTION_SERVICE_URL="http://localhost:2013" \
+PYTHONPATH=/Users/m4mini/Desktop/DOCKER-local/DATAFLUX/services/analysis-service \
 python3 src/api_processor.py
 
 # Query Service
@@ -114,11 +118,22 @@ curl "http://localhost:2013/api/v1/assets/{asset_id}/analysis" | jq
 9. **FaceNet Recognition** - Face Embeddings
 10. **Face Quality** - Quality Assessment
 
+### Dokumentenanalyse (Docling)
+
+1. **PDF-Verarbeitung** - Layout-Analyse, OCR, Tabellenerkennung
+2. **Office-Dokumente** - DOCX, PPTX, XLSX mit Formatierung
+3. **HTML-Verarbeitung** - Web-Content-Extraktion
+4. **Multimodale Unterstützung** - Bilder, Audio, VTT-Untertitel
+5. **Intelligente Segmentierung** - Text, Tabellen, Figuren, Überschriften
+6. **Metadaten-Extraktion** - Dokumenttyp, Sprache, Komplexität
+7. **Performance-Optimierung** - LRU-Caching, Batch-Processing
+
 ## 🔥 Performance
 
 - **YOLO**: 66ms pro Bild
 - **DeepFace**: ~26s für 2 Gesichter
 - **FaceNet**: ~4s pro Gesicht
+- **Docling**: ~2-5s pro Dokument (je nach Größe und Komplexität)
 - **Gesamt**: ~35s für 42MP Bild mit allen Features
 
 ## 🐛 Troubleshooting
@@ -159,6 +174,8 @@ lsof -i :3000  # oder :2013, :8003
 - **GPU nutzen**: FaceNet läuft auf CPU wegen MPS-Kompatibilität, YOLO nutzt den M4 optimal
 - **Vollbilder**: System analysiert jetzt Vollauflösung (kein Resize mehr)
 - **Features anzeigen**: Web-UI zeigt alle Features im Analysis Results Modal
+- **Dokumente**: PDFs und Office-Dokumente werden automatisch mit Docling verarbeitet
+- **Dateinamen**: Verwenden Sie ASCII-Zeichen für Dateinamen (keine Umlaute) um Encoding-Probleme zu vermeiden
 - **Logs**: Immer zuerst die Logs prüfen bei Problemen
 
 ## 📚 Weiterführende Informationen
@@ -166,14 +183,16 @@ lsof -i :3000  # oder :2013, :8003
 - YOLO: Ultra-schnelle Objekterkennung
 - DeepFace: Gesichtsanalyse mit demographischen Daten
 - FaceNet: Google's Face Recognition System
+- Docling: IBM's professionelle Dokumentenverarbeitung
 - PostgreSQL: Alle Features persistent gespeichert
 
 ## 🎉 Erfolg!
 
 Wenn alles läuft, solltest du sehen:
 - Web-UI: http://localhost:3000
-- Assets hochladen und analysieren
+- Assets hochladen und analysieren (Bilder + Dokumente)
 - 47+ Features pro Bild
+- Vollständige Dokumentenanalyse mit Docling
 - Analyse-Ergebnisse in Echtzeit
 
 **Viel Spaß mit DATAFLUX auf deinem Mac Mini M4!** 🚀

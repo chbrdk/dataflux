@@ -14,17 +14,41 @@ import asyncpg
 from datetime import datetime
 from pathlib import Path
 
-# Import analyzers
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'analyzers'))
-from image_analyzer import ImageAnalyzer
-
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Import analyzers
+import sys
+# Add parent directory to path
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
+logger.info(f"📂 Added to Python path: {parent_dir}")
+
+from analyzers.image_analyzer import ImageAnalyzer
+
+try:
+    from analyzers.docling_analyzer import DoclingAnalyzer
+    DOCLING_AVAILABLE = True
+    logger.info("✅ DoclingAnalyzer erfolgreich importiert")
+except ImportError as e:
+    DOCLING_AVAILABLE = False
+    logger.warning(f"⚠️ DoclingAnalyzer nicht verfügbar: {e}")
+    import traceback
+    traceback.print_exc()
+
+try:
+    from analyzers.video_analyzer import EnhancedVideoAnalyzer
+    VIDEO_ANALYZER_AVAILABLE = True
+    logger.info("✅ EnhancedVideoAnalyzer erfolgreich importiert")
+except ImportError as e:
+    VIDEO_ANALYZER_AVAILABLE = False
+    logger.warning(f"⚠️ EnhancedVideoAnalyzer nicht verfügbar: {e}")
+    import traceback
+    traceback.print_exc()
 
 class APIAssetProcessor:
     """Asset processor der über API kommuniziert"""
@@ -36,12 +60,34 @@ class APIAssetProcessor:
         # Initialize analyzers
         self.image_analyzer = ImageAnalyzer()
         
+        # Initialize Docling analyzer if available
+        if DOCLING_AVAILABLE:
+            try:
+                self.docling_analyzer = DoclingAnalyzer()
+                logger.info("✅ DoclingAnalyzer erfolgreich initialisiert")
+            except Exception as e:
+                logger.warning(f"⚠️ DoclingAnalyzer Initialisierung fehlgeschlagen: {e}")
+                self.docling_analyzer = None
+        else:
+            self.docling_analyzer = None
+        
+        # Initialize Enhanced Video Analyzer if available
+        if VIDEO_ANALYZER_AVAILABLE:
+            try:
+                self.video_analyzer = EnhancedVideoAnalyzer()
+                logger.info("✅ EnhancedVideoAnalyzer erfolgreich initialisiert")
+            except Exception as e:
+                logger.warning(f"⚠️ EnhancedVideoAnalyzer Initialisierung fehlgeschlagen: {e}")
+                self.video_analyzer = None
+        else:
+            self.video_analyzer = None
+        
         # Storage paths
         self.storage_base_path = "/tmp/dataflux_storage"  # Will be configured via environment
         os.makedirs(self.storage_base_path, exist_ok=True)
         
         # Database connection
-        self.db_url = os.getenv("DATABASE_URL", "postgresql://dataflux_user:secure_password_here@localhost:7002/dataflux")
+        self.db_url = os.getenv("DATABASE_URL", "postgresql://dataflux_user:secure_password_here@localhost:2001/dataflux")
         
     def get_queued_assets(self):
         """Hole queued assets vom Ingestion Service"""
@@ -121,15 +167,27 @@ class APIAssetProcessor:
                 results = await self.image_analyzer.analyze(file_path, asset)
                 logger.info(f"🧠 Image analysis completed for {filename}")
             elif mime_type.startswith('video/'):
-                # TODO: Implement video analyzer
-                results = self._generate_fallback_results(asset)
-                logger.info(f"🧠 Video analysis (fallback) for {filename}")
+                # Use Enhanced Video Analyzer if available
+                if self.video_analyzer:
+                    results = await self.video_analyzer.analyze(file_path, asset)
+                    logger.info(f"🎬 Enhanced Video analysis completed for {filename}")
+                else:
+                    results = self._generate_fallback_results(asset)
+                    logger.warning(f"⚠️ Enhanced Video Analyzer not available, using fallback for {filename}")
             elif mime_type.startswith('audio/'):
                 # TODO: Implement audio analyzer
                 results = self._generate_fallback_results(asset)
                 logger.info(f"🧠 Audio analysis (fallback) for {filename}")
+            elif mime_type in ['application/pdf', 'text/html', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']:
+                # Use Docling for PDFs and documents
+                if self.docling_analyzer:
+                    results = await self.docling_analyzer.analyze(file_path, asset)
+                    logger.info(f"📄 Docling analysis completed for {filename}")
+                else:
+                    results = self._generate_fallback_results(asset)
+                    logger.warning(f"⚠️ Docling not available, using fallback for {filename}")
             else:
-                # TODO: Implement document analyzer
+                # Fallback for other document types
                 results = self._generate_fallback_results(asset)
                 logger.info(f"🧠 Document analysis (fallback) for {filename}")
             
@@ -245,11 +303,23 @@ class APIAssetProcessor:
                 # Store segments
                 segments = results.get('segments', [])
                 for segment in segments:
+                        segment_id = str(uuid.uuid4())
+                        
+                        # First, create entity for the segment
+                        await conn.execute("""
+                            INSERT INTO entities (id, entity_type, created_at)
+                            VALUES ($1, $2, NOW())
+                        """, 
+                        segment_id,
+                        'segment'
+                        )
+                        
+                        # Then, insert the segment
                         await conn.execute("""
                             INSERT INTO segments (id, asset_id, segment_type, sequence_number, start_marker, end_marker, confidence_score, duration)
                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                         """, 
-                        str(uuid.uuid4()),
+                        segment_id,
                         asset_id,
                         segment.get('type', 'unknown'),
                         segment.get('sequence_number', 0),

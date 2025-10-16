@@ -74,7 +74,7 @@ CREATE TABLE features (
     analyzer_version VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     
-    CONSTRAINT valid_feature_domain CHECK (feature_domain IN ('visual', 'semantic', 'style', 'technical', 'audio', 'text')),
+    CONSTRAINT valid_feature_domain CHECK (feature_domain IN ('visual', 'semantic', 'style', 'technical', 'audio', 'text', 'temporal', 'quality', 'safety')),
     CONSTRAINT valid_feature_confidence CHECK (confidence BETWEEN 0.0 AND 1.0),
     CONSTRAINT feature_must_belong_to_asset_or_segment CHECK (
         (asset_id IS NOT NULL AND segment_id IS NULL) OR 

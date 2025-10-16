@@ -8,6 +8,7 @@ import Upload from '../components/Upload'
 import Search from '../components/Search'
 import Assets from '../components/Assets'
 import Persons from '../components/Persons'
+import Query from '../components/Query'
 import { useAppStore } from '../store/appStore'
 
 const queryClient = new QueryClient({
@@ -45,6 +46,8 @@ const Home: NextPage = () => {
         return <div className="p-6"><h2 className="text-2xl font-semibold">Analytics</h2><p className="mt-4">Analytics wird geladen...</p></div>
       case 'persons':
         return <Persons />
+      case 'query':
+        return <Query />
       default:
         return <div className="p-6"><h2 className="text-2xl font-semibold">Dashboard</h2><p className="mt-4">Dashboard wird geladen...</p></div>
     }

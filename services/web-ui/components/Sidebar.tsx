@@ -15,7 +15,8 @@ import {
   Image,
   Video,
   Music,
-  Users
+  Users,
+  MessageSquare
 } from 'lucide-react'
 
 const Sidebar: React.FC = () => {
@@ -62,6 +63,12 @@ const Sidebar: React.FC = () => {
       label: 'Personen',
       icon: Users,
       description: 'Recognized persons and faces'
+    },
+    {
+      id: 'query',
+      label: 'AI Query',
+      icon: MessageSquare,
+      description: 'Natural language search'
     }
   ]
 
@@ -93,6 +100,13 @@ const Sidebar: React.FC = () => {
       icon: Database,
       status: 'running',
       port: '2015'
+    },
+    {
+      id: 'search',
+      label: 'Search Service',
+      icon: Search,
+      status: 'running',
+      port: '2016'
     }
   ]
 
